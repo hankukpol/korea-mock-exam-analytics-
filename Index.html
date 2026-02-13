@@ -1,0 +1,2066 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>모의고사 성적 분석 시스템</title>
+    <?!= include('Css'); ?>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <!-- ===== 로그인 화면 ===== -->
+    <div id="loginSection" class="login-container">
+        <div class="login-box">
+            <div class="glass-card">
+                <div class="login-logo">
+                    <span class="icon"></span>
+                </div>
+                <h1 class="login-title">성적 분석 시스템</h1>
+                <p class="login-subtitle">경찰 / 소방 모의고사 합격 예측</p>
+
+                <div class="form-group">
+                    <label for="studentId">수험번호</label>
+                    <input type="text" id="studentId" class="form-input" placeholder="수험번호 5자리를 입력하세요"
+                        autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label for="userName">이름</label>
+                    <input type="text" id="userName" class="form-input" placeholder="본인 이름을 입력하세요" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label>직렬 선택</label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <label id="typePolice" class="type-selector active" onclick="selectType('경찰')">
+                            <input type="radio" name="examType" value="경찰" checked style="display:none;">
+                            경찰
+                        </label>
+                        <label id="typeFire" class="type-selector" onclick="selectType('소방')">
+                            <input type="radio" name="examType" value="소방" style="display:none;">
+                            소방
+                        </label>
+                    </div>
+                </div>
+
+                <button id="loginBtn" class="btn btn-primary" onclick="handleLogin()">성적 분석 시작</button>
+
+                <div id="loginMessage" class="message"></div>
+            </div>
+
+            <p style="text-align:center; margin-top:16px; font-size:12px; color:rgba(255,255,255,0.3);">
+                ※ 로그인 후 응시한 시험 회차를 선택할 수 있습니다
+            </p>
+        </div>
+    </div>
+
+    <!-- ===== 로그인 후 시험 선택 화면 ===== -->
+    <div id="examSelectSection" class="login-container" style="display:none;">
+        <div class="login-box">
+            <div class="glass-card">
+                <div class="login-logo">
+                    <span class="icon"></span>
+                </div>
+                <h1 class="login-title">응시 시험 선택</h1>
+                <p class="login-subtitle" id="examSelectSubtitle">로그인 완료. 응시한 시험 회차를 선택해 주세요.</p>
+
+                <div class="form-group">
+                    <label for="postLoginExamId">시험 회차</label>
+                    <select id="postLoginExamId" class="form-input">
+                        <option value="">시험을 불러오는 중...</option>
+                    </select>
+                </div>
+
+                <button id="startAnalysisBtn" class="btn btn-primary" onclick="startAnalysis()">
+                    성적 분석 시작
+                </button>
+                <button class="btn btn-secondary" onclick="resetToLogin()" style="margin-top:10px; width:100%;">
+                    다시 로그인
+                </button>
+
+                <div id="examSelectMessage" class="message"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 성적 분석 대시보드 화면 ===== -->
+    <div id="dashboardSection" class="dashboard-section"
+        style="display:none; max-width:1100px; margin:0 auto; padding:24px;">
+        <div class="dashboard-header">
+            <div class="dashboard-header-main">
+                <h2 id="studentNameTitle">반갑습니다, OOO님</h2>
+                <p id="examNameTitle" style="color:rgba(255,255,255,0.6);">2026 시즌1 1회차 모의고사 분석 결과입니다.</p>
+                <div class="dashboard-view-tabs">
+                    <button id="dashTabAnalysis" class="dash-tab-btn active" onclick="switchDashboardTab('analysis')">성적
+                        분석</button>
+                    <button id="dashTabAdmit" class="dash-tab-btn" onclick="switchDashboardTab('admit')">수험표</button>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="printAdmitBtn" class="btn btn-secondary action-btn" onclick="printAdmitTicket()"
+                    style="display:none;">수험표 인쇄</button>
+                <button class="btn btn-secondary action-btn" onclick="goBack()">시험 변경</button>
+                <button class="btn btn-secondary action-btn" onclick="resetToLogin()">로그아웃</button>
+            </div>
+        </div>
+
+        <div id="analysisView" class="dashboard-grid">
+            <!-- 상단 요약 카드 -->
+            <div class="summary-cards">
+                <div class="stat-card">
+                    <div class="stat-label">내 총점</div>
+                    <div class="stat-number" id="myTotalScore">0</div>
+                    <div class="stat-desc" id="scoreTotalMaxLabel">만점 250점</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">전체 석차</div>
+                    <div class="stat-number" id="myOverallRank">0 / 0</div>
+                    <div class="stat-desc" id="myPercentile">상위 0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">지역 석차</div>
+                    <div class="stat-number" id="myRegionalRank">0 / 0</div>
+                    <div class="stat-desc" id="myRegionName">대구 지역 기준</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">지역 백분위</div>
+                    <div class="stat-number" id="myRegionalPercentile">0%</div>
+                    <div class="stat-desc">내 응시지역 기준</div>
+                </div>
+            </div>
+
+            <div class="analysis-subtabs">
+                <button id="detailTabOverview" class="analysis-tab-btn active" data-theme="indigo"
+                    onclick="switchAnalysisDetailTab('overview')">
+                    <div class="menu-icon">📊</div>
+                    <div class="menu-label">종합 현황</div>
+                </button>
+                <button id="detailTabSubject" class="analysis-tab-btn" data-theme="blue"
+                    onclick="switchAnalysisDetailTab('subject')">
+                    <div class="menu-icon">📈</div>
+                    <div class="menu-label">과목별 성취도</div>
+                </button>
+                <button id="detailTabItem" class="analysis-tab-btn" data-theme="teal"
+                    onclick="switchAnalysisDetailTab('item')">
+                    <div class="menu-icon">📝</div>
+                    <div class="menu-label">문항 채점표</div>
+                </button>
+                <button id="detailTabKiller" class="analysis-tab-btn" data-theme="orange"
+                    onclick="switchAnalysisDetailTab('killer')">
+                    <div class="menu-icon">🔥</div>
+                    <div class="menu-label">오답률 Top5</div>
+                </button>
+                <button id="detailTabCompetitor" class="analysis-tab-btn" data-theme="purple"
+                    onclick="switchAnalysisDetailTab('competitor')">
+                    <div class="menu-icon">👥</div>
+                    <div class="menu-label">경쟁자 성적</div>
+                </button>
+                <button id="detailTabRegional" class="analysis-tab-btn" data-theme="green"
+                    onclick="switchAnalysisDetailTab('regional')">
+                    <div class="menu-icon">📍</div>
+                    <div class="menu-label">지역 분석</div>
+                </button>
+                <button id="detailTabDistribution" class="analysis-tab-btn" data-theme="slate"
+                    onclick="switchAnalysisDetailTab('distribution')">
+                    <div class="menu-icon">📉</div>
+                    <div class="menu-label">성적 분포도</div>
+                </button>
+            </div>
+
+            <div id="analysisPanelOverview" class="analysis-panel active">
+                <div class="glass-card">
+                    <h3>수험생 정보</h3>
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>시험일자</th>
+                                    <th>응시직렬</th>
+                                    <th>이름</th>
+                                    <th>수험번호</th>
+                                    <th>석차</th>
+                                </tr>
+                            </thead>
+                            <tbody id="candidateInfoTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="analysis-2col">
+                    <div class="glass-card">
+                        <h3>직렬 내 경쟁자 분석</h3>
+                        <p id="overviewPositionText" class="analysis-note"></p>
+                        <div style="height: 300px; margin-bottom: 20px;">
+                            <canvas id="overviewCompareChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="glass-card">
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h3 style="margin:0;">합격 예측 피라미드</h3>
+                            <span class="stat-desc">내 위치: <strong id="pyramidStatusText">-</strong> <span
+                                    id="pyramidReliabilityNote"></span></span>
+                        </div>
+                        <div class="pyramid-layout" style="display:flex; gap:20px; align-items:center;">
+                            <div class="pyramid-container" id="pyramidUI" style="flex:1;">
+                                <div class="pyramid-layer" id="p-sure"><span class="p-label">확실권</span></div>
+                                <div class="pyramid-layer" id="p-likely"><span class="p-label">유력권</span></div>
+                                <div class="pyramid-layer" id="p-possible"><span class="p-label">가능권</span></div>
+                                <div class="pyramid-layer" id="p-challenge"><span class="p-label">도전권</span></div>
+                            </div>
+                            <div class="pyramid-legend"
+                                style="flex:1.2; font-size:14px; color:var(--text-muted); display:flex; flex-direction:column; gap:10px;">
+                                <div style="padding:10px 14px; background:#f8f9fa; border-radius:6px;">
+                                    <strong>S 확실권</strong>: 상위 5% 이내 (안정 합격)
+                                </div>
+                                <div style="padding:10px 14px; background:#f8f9fa; border-radius:6px;">
+                                    <strong>A 유력권</strong>: 상위 15% 이내 (합격 기대)
+                                </div>
+                                <div style="padding:10px 14px; background:#f8f9fa; border-radius:6px;">
+                                    <strong>B 가능권</strong>: 상위 30% 이내 (경합)
+                                </div>
+                                <div style="padding:10px 14px; background:#f8f9fa; border-radius:6px;">
+                                    <strong>C 도전권</strong>: 상위 30% 초과 (성적 향상 필요)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card">
+                    <h3>과목별 위치 및 성취도 분석</h3>
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>과목명</th>
+                                    <th>내 점수</th>
+                                    <th>백분율(%)</th>
+                                    <th>내 석차</th>
+                                    <th>최고점</th>
+                                    <th>상위 10% 평균</th>
+                                </tr>
+                            </thead>
+                            <tbody id="integratedSubjectTableBody"></tbody>
+                            <tfoot id="integratedSubjectTotalRow"></tfoot>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="glass-card" style="margin-top: 20px;">
+                    <h3>과목 균형 분석 및 조언</h3>
+                    <p id="balanceScoreText" class="analysis-note"></p>
+                    <div id="warningsBox" class="warnings-box"></div>
+                </div>
+
+                <div class="glass-card" style="margin-top: 20px;">
+                    <h3>전체 응시자 석차 현황</h3>
+                    <p class="analysis-note">모든 응시자의 성적을 석차순으로 확인할 수 있습니다.</p>
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead id="rankingTableHeader">
+                                <!-- 직렬별로 동적 생성 -->
+                            </thead>
+                            <tbody id="rankingTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="analysisPanelSubject" class="analysis-panel">
+                <div class="analysis-2col">
+                    <div class="glass-card">
+                        <h3>과목별 성취도</h3>
+                        <div class="data-table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>과목명</th>
+                                        <th>내 점수</th>
+                                        <th>평균</th>
+                                        <th>상위10%</th>
+                                        <th>석차</th>
+                                        <th>상위%</th>
+                                        <th>평가</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="subjectGradeTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="glass-card">
+                        <h3>내 점수 vs 응시자 평균 (레이더)</h3>
+                        <canvas id="radarChart"></canvas>
+                    </div>
+                </div>
+                <div class="glass-card">
+                    <h3>응시자 과목별 평균성적</h3>
+                    <canvas id="subjectAvgBarChart"></canvas>
+                </div>
+            </div>
+
+            <div id="analysisPanelItem" class="analysis-panel">
+                <div class="glass-card">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:16px;">
+                        <h3 style="margin:0;">문항 채점표</h3>
+                        <p id="itemStatsText" class="analysis-note" style="margin:0;"></p>
+                    </div>
+
+                    <!-- 과목 필터 버튼 컨테이너 -->
+                    <div id="itemSubjectFilters" class="subject-filter-wrap"></div>
+
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>문항</th>
+                                    <th>과목</th>
+                                    <th>정답</th>
+                                    <th>학생답안</th>
+                                    <th>정오표</th>
+                                    <th>정답률</th>
+                                    <th>난이도</th>
+                                </tr>
+                            </thead>
+                            <tbody id="itemScoreTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="analysis-2col">
+                    <div class="glass-card">
+                        <h3>킬러 문항 정복률</h3>
+                        <p id="killerConquerText" class="analysis-note"
+                            style="font-size: 16px; font-weight: 700; color: var(--primary-color);"></p>
+                        <p style="font-size: 13px; color: var(--text-muted); margin-top: 5px;">* 정답률 40% 미만 문항 기준</p>
+                    </div>
+                    <div class="glass-card">
+                        <h3>나만 틀린 문제</h3>
+                        <p class="analysis-note">정답률 80% 이상 중 오답 문항</p>
+                        <div class="data-table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>문항</th>
+                                        <th>정답률</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="easyMissedTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div id="analysisPanelKiller" class="analysis-panel">
+                <div class="glass-card">
+                    <h3>오답률 TOP 5</h3>
+
+                    <!-- 과목 필터 버튼 컨테이너 -->
+                    <div id="killerSubjectFilters" class="subject-filter-wrap"></div>
+
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>순서</th>
+                                    <th>문항</th>
+                                    <th>과목</th>
+                                    <th>정답률</th>
+                                    <th>오답률</th>
+                                    <th>나의결과</th>
+                                </tr>
+                            </thead>
+                            <tbody id="killerTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+
+            <div id="analysisPanelCompetitor" class="analysis-panel">
+                <div class="glass-card">
+                    <h3>경쟁자 성적 확인</h3>
+                    <p class="analysis-note">내 등수 인근 응시자 성적(익명) 기준</p>
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>석차</th>
+                                    <th>응시자(익명)</th>
+                                    <th>총점</th>
+                                    <th>내 점수와 차이</th>
+                                    <th>예측권역</th>
+                                    <th>문항 응답 요약</th>
+                                </tr>
+                            </thead>
+                            <tbody id="competitorTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="analysisPanelRegional" class="analysis-panel">
+                <div class="glass-card">
+                    <h3>응시 지역 경쟁 분석</h3>
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>응시지역</th>
+                                    <th>내 석차</th>
+                                    <th>지역 백분위</th>
+                                    <th>지역 평균</th>
+                                    <th>지역 상위10% 평균</th>
+                                </tr>
+                            </thead>
+                            <tbody id="regionalStatsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="glass-card">
+                    <h3>지역/전체 비교 차트</h3>
+                    <canvas id="regionalCompareChart"></canvas>
+                </div>
+            </div>
+
+            <div id="analysisPanelDistribution" class="analysis-panel">
+                <div class="glass-card">
+                    <h3>성적 분포도</h3>
+                    <div class="distribution-wrap">
+                        <div id="distributionMeta" class="distribution-meta"></div>
+                        <div class="distribution-chart-wrap">
+                            <canvas id="distributionChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="admitView" style="display:none;">
+            <div class="glass-card">
+                <div id="admitPrintArea"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 경쟁자 상세 모달 -->
+    <div id="competitorModal" class="competitor-modal-overlay" style="display:none;"
+        onclick="closeCompetitorModalOnOverlay(event)">
+        <div class="competitor-modal" role="dialog" aria-modal="true" aria-labelledby="competitorModalTitle">
+            <div class="competitor-modal-header">
+                <h3 id="competitorModalTitle">경쟁자 세부성적</h3>
+                <button type="button" class="competitor-modal-close" onclick="closeCompetitorModal()">닫기</button>
+            </div>
+            <p id="modalCompetitorInfo" class="analysis-note"></p>
+            <div id="modalSubjectButtons" class="modal-subject-buttons"></div>
+            <div class="data-table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>문항</th>
+                            <th>입력답안</th>
+                            <th>정답</th>
+                            <th>정오</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalDetailTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var currentData = null;
+        var radarChart = null;
+        var subjectAvgBarChart = null;
+        var regionalCompareChart = null;
+        var distributionChart = null;
+        var overviewCompareChart = null;
+
+        var subjectPercentileChart = null;
+        var currentUser = null;
+        var selectedItemSubjectIdx = -1; // -1: 전체
+        var selectedKillerSubjectIdx = -1; // -1: 전체
+
+        function getSelectedType() {
+            var selected = document.querySelector('input[name="examType"]:checked');
+            return selected ? selected.value : '';
+        }
+
+        function updateTypeUI() {
+            var type = getSelectedType();
+            document.getElementById('typePolice').classList.toggle('active', type === '경찰');
+            document.getElementById('typeFire').classList.toggle('active', type === '소방');
+        }
+
+        function selectType(type) {
+            var police = document.querySelector('input[name="examType"][value="경찰"]');
+            var fire = document.querySelector('input[name="examType"][value="소방"]');
+
+            if (type === '경찰' && police) police.checked = true;
+            if (type === '소방' && fire) fire.checked = true;
+
+            updateTypeUI();
+        }
+
+        function openExamSelect(user) {
+            if (!user || !user.studentId) {
+                resetToLogin();
+                showMessage(document.getElementById('loginMessage'), '로그인 정보가 올바르지 않습니다. 다시 로그인해 주세요.', 'error');
+                return;
+            }
+            currentUser = user;
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('dashboardSection').style.display = 'none';
+            document.getElementById('examSelectSection').style.display = 'flex';
+            var displayName = user.name ? user.name : '수험생';
+            document.getElementById('examSelectSubtitle').innerText = displayName + '님, 응시한 시험 회차를 선택해 주세요.';
+            loadMyExamList();
+        }
+
+        function loadMyExamList() {
+            var select = document.getElementById('postLoginExamId');
+            var msgEl = document.getElementById('examSelectMessage');
+
+            if (!select || !msgEl) return;
+
+            select.innerHTML = '<option value="">시험을 불러오는 중...</option>';
+            msgEl.className = 'message';
+            msgEl.style.display = 'none';
+
+            if (!currentUser || !currentUser.studentId) {
+                select.innerHTML = '<option value="">로그인 정보 없음</option>';
+                showMessage(msgEl, '로그인 정보가 없습니다. 다시 로그인해 주세요.', 'error');
+                return;
+            }
+
+            if (!(window.google && google.script && google.script.run)) {
+                select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
+                showMessage(msgEl, '웹앱 환경 연결을 확인해 주세요.', 'error');
+                return;
+            }
+
+            function renderExamOptions(exams) {
+                if (!Array.isArray(exams) || exams.length === 0) return false;
+                var html = '<option value="">시험을 선택하세요</option>';
+                exams.forEach(function (exam) {
+                    html += '<option value="' + exam.id + '">' + exam.name + ' (' + exam.id + ')</option>';
+                });
+                select.innerHTML = html;
+                return true;
+            }
+
+            google.script.run
+                .withSuccessHandler(function (allResult) {
+                    if (!allResult || !allResult.success) {
+                        select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
+                        showMessage(msgEl, (allResult && allResult.message) || '시험 목록 조회에 실패했습니다.', 'error');
+                        return;
+                    }
+
+                    var allExams = Array.isArray(allResult.data) ? allResult.data : [];
+                    if (!renderExamOptions(allExams)) {
+                        select.innerHTML = '<option value="">해당 직렬 시험이 없습니다</option>';
+                        showMessage(msgEl, '해당 직렬의 시험 데이터가 없습니다. 관리자에게 문의해 주세요.', 'error');
+                        return;
+                    }
+
+                    // 응시 이력이 있으면 목록을 내 시험 기준으로 좁혀서 다시 표시
+                    google.script.run
+                        .withSuccessHandler(function (myResult) {
+                            if (!myResult || !myResult.success) return;
+                            var myExams = Array.isArray(myResult.data) ? myResult.data : [];
+                            if (!myExams.length) return;
+                            renderExamOptions(myExams);
+                            msgEl.className = 'message';
+                            msgEl.style.display = 'none';
+                        })
+                        .withFailureHandler(function () {
+                            // 실패해도 직렬 전체 시험 목록은 이미 표시되어 있음
+                        })
+                        .getStudentExamList(currentUser.studentId, currentUser.examType);
+                })
+                .withFailureHandler(function (err) {
+                    select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
+                    var reason = (err && err.message) ? err.message : '서버 연결 실패';
+                    showMessage(msgEl, '시험 목록 조회 실패: ' + reason, 'error');
+                })
+                .getExamList(currentUser.examType);
+        }
+
+        function startAnalysis() {
+            var examId = document.getElementById('postLoginExamId').value;
+            var msgEl = document.getElementById('examSelectMessage');
+            var btn = document.getElementById('startAnalysisBtn');
+
+            if (!examId) {
+                showMessage(msgEl, '분석할 시험 회차를 선택해 주세요.', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> 분석 중...';
+
+            loadScoreAnalysis(examId, currentUser.studentId, function () {
+                btn.disabled = false;
+                btn.innerHTML = '성적 분석 시작';
+            });
+        }
+
+        // ===== 로그인 =====
+        function handleLogin() {
+            var studentId = document.getElementById('studentId').value.trim();
+            var name = document.getElementById('userName').value.trim();
+            var examType = getSelectedType();
+            var msgEl = document.getElementById('loginMessage');
+            var btn = document.getElementById('loginBtn');
+
+            if (!studentId || !name) {
+                showMessage(msgEl, '수험번호와 이름을 모두 입력해 주세요.', 'error');
+                return;
+            }
+            if (!examType) {
+                showMessage(msgEl, '경찰/소방 직렬을 선택해 주세요.', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> 인증 중...';
+            msgEl.className = 'message';
+            msgEl.style.display = 'none';
+
+            // 1단계: 수험생 인증
+            google.script.run
+                .withSuccessHandler(function (loginResult) {
+                    if (loginResult.success) {
+                        btn.disabled = false;
+                        btn.innerHTML = '로그인';
+                        openExamSelect(loginResult.data);
+                    } else {
+                        btn.disabled = false;
+                        btn.innerHTML = '로그인';
+                        showMessage(msgEl, loginResult.message, 'error');
+                    }
+                })
+                .withFailureHandler(function (err) {
+                    btn.disabled = false;
+                    btn.innerHTML = '로그인';
+                    showMessage(msgEl, '서버 오류가 발생했습니다. 다시 시도해 주세요.', 'error');
+                })
+                .loginUser(studentId, name, '', examType);
+        }
+
+        function loadScoreAnalysis(examId, studentId, done) {
+            google.script.run
+                .withSuccessHandler(function (analysisResult) {
+                    if (done) done();
+
+                    if (analysisResult.success) {
+                        currentData = analysisResult.data;
+                        try {
+                            renderDashboard(analysisResult.data);
+                        } catch (e) {
+                            console.error('Render error:', e);
+                            var msgEl = document.getElementById('examSelectSection').style.display === 'none'
+                                ? document.getElementById('loginMessage')
+                                : document.getElementById('examSelectMessage');
+                            showMessage(msgEl, '레이아웃 렌더링 중 오류가 발생했습니다. (' + e.message + ')', 'error');
+                        }
+                    } else {
+                        var msgEl = document.getElementById('examSelectSection').style.display === 'none'
+                            ? document.getElementById('loginMessage')
+                            : document.getElementById('examSelectMessage');
+                        showMessage(msgEl, analysisResult.message, 'error');
+                    }
+                })
+                .withFailureHandler(function (err) {
+                    if (done) done();
+                    var msgEl = document.getElementById('examSelectSection').style.display === 'none'
+                        ? document.getElementById('loginMessage')
+                        : document.getElementById('examSelectMessage');
+                    showMessage(msgEl, '데이터 분석 중 오류가 발생했습니다.', 'error');
+                })
+                .getStudentReport(examId, studentId);
+        }
+
+        function switchDashboardTab(tabName) {
+            var analysisView = document.getElementById('analysisView');
+            var admitView = document.getElementById('admitView');
+            var tabAnalysis = document.getElementById('dashTabAnalysis');
+            var tabAdmit = document.getElementById('dashTabAdmit');
+            var printBtn = document.getElementById('printAdmitBtn');
+            var isAdmit = tabName === 'admit';
+
+            if (analysisView) {
+                analysisView.style.display = isAdmit ? 'none' : 'block';
+                analysisView.hidden = isAdmit;
+            }
+            if (admitView) {
+                admitView.style.display = isAdmit ? 'block' : 'none';
+                admitView.hidden = !isAdmit;
+            }
+            if (tabAnalysis) tabAnalysis.classList.toggle('active', !isAdmit);
+            if (tabAdmit) tabAdmit.classList.toggle('active', isAdmit);
+            if (printBtn) printBtn.style.display = isAdmit ? 'inline-block' : 'none';
+
+            if (!isAdmit && currentData) {
+                var activeTab = document.querySelector('.analysis-tab-btn.active');
+                var activeId = activeTab ? activeTab.id : 'detailTabOverview';
+                var map = {
+                    detailTabOverview: 'overview',
+                    detailTabSubject: 'subject',
+                    detailTabItem: 'item',
+                    detailTabKiller: 'killer',
+                    detailTabCompetitor: 'competitor',
+                    detailTabRegional: 'regional',
+                    detailTabDistribution: 'distribution'
+                };
+                switchAnalysisDetailTab(map[activeId] || 'overview');
+            }
+        }
+
+        function printAdmitTicket() {
+            if (!currentData) return;
+            switchDashboardTab('admit');
+            document.body.classList.add('printing-admit');
+            setTimeout(function () {
+                window.print();
+            }, 120);
+
+            if (window.google && google.script && google.script.run) {
+                var s = currentData.student || {};
+                google.script.run.logPrintAction(s.name || '', s.phone || '');
+            }
+        }
+
+        function renderAdmitTicket(data) {
+            var printArea = document.getElementById('admitPrintArea');
+            if (!printArea) return;
+            printArea.innerHTML = buildAdmitTicketHtml(data);
+        }
+
+        function buildAdmitTicketHtml(data) {
+            var s = data.student || {};
+            if ((s.type || '').trim() === '소방') {
+                return buildFireAdmitHtml(data);
+            }
+            return buildPoliceAdmitHtml(data);
+        }
+
+        function buildPoliceAdmitHtml(data) {
+            var s = data.student || {};
+            var e = data.exam || {};
+            var subjects = Array.isArray(e.subjects) ? e.subjects : [];
+            var s1 = subjects[0] || '과목1';
+            var s2 = subjects[1] || '과목2';
+            var s3 = subjects[2] || '과목3';
+            var fieldText = s.examField || s.examRank || '일반공채';
+            var examTypeText = e.name || '경찰 모의고사';
+            if (s.examRank) examTypeText += ' (' + s.examRank + ')';
+
+            return ''
+                + '<div class="admit-ticket police-ticket">'
+                + '  <div class="admit-title-main">2026년 경찰공무원 채용시험 응시표</div>'
+                + '  <table class="admit-table">'
+                + '    <tr><th>구분</th><td>' + escapeHtml(examTypeText) + '</td></tr>'
+                + '    <tr><th>시험회차</th><td>' + escapeHtml((e.id || '-') + ' / ' + (e.name || '-')) + '</td></tr>'
+                + '    <tr><th>응시분야</th><td>' + escapeHtml(fieldText) + '</td></tr>'
+                + '    <tr><th>응시경찰청</th><td>' + escapeHtml(s.region || '-') + '</td></tr>'
+                + '    <tr><th class="emph">응시번호</th><td class="emph">' + escapeHtml(s.id || '-') + '</td></tr>'
+                + '    <tr><th>성명</th><td>' + escapeHtml(s.name || '-') + '</td></tr>'
+                + '    <tr><th>주민등록번호</th><td>' + escapeHtml(formatResidentNumber(s.birthDate)) + '</td></tr>'
+                + '    <tr><th>시험과목</th><td class="admit-subject-cell">'
+                + '      <div>제1과목: ' + escapeHtml(s1) + '</div>'
+                + '      <div>제2과목: ' + escapeHtml(s2) + '</div>'
+                + '      <div>제3과목: ' + escapeHtml(s3) + '</div>'
+                + '    </td></tr>'
+                + '  </table>'
+                + '  <div class="admit-photo-box">증명사진</div>'
+                + '  <div class="admit-date">' + escapeHtml(normalizeDateText(new Date(), '.')) + '</div>'
+                + '  <div class="admit-sign">(주) 올패스공무원독학원</div>'
+                + '  <div class="admit-notice">'
+                + '    <div class="admit-notice-title">[주 의 사 항]</div>'
+                + '    <p>응시표 출력 후 응시번호, 응시경찰청, 시험과목 등을 반드시 확인해 주세요.</p>'
+                + '    <p>응시표와 신분증을 지참하지 않으면 시험에 응시할 수 없습니다.</p>'
+                + '  </div>'
+                + '</div>';
+        }
+
+        function buildFireAdmitHtml(data) {
+            var s = data.student || {};
+            var e = data.exam || {};
+            var subjects = Array.isArray(e.subjects) ? e.subjects : [];
+            var subjectText = s.examSubject || subjects.join(', ');
+
+            return ''
+                + '<div class="admit-ticket fire-ticket">'
+                + '  <div class="admit-title-main">2026년 올패스공무원독학원 현장모의고사 필기시험 응시표</div>'
+                + '  <table class="admit-table fire-main-table">'
+                + '    <tr>'
+                + '      <td class="fire-figure" rowspan="6">소방<br>응시자</td>'
+                + '      <th>성명</th><td>' + escapeHtml(s.name || '-') + '</td>'
+                + '      <th>생년월일</th><td>' + escapeHtml(normalizeDateText(s.birthDate, '.')) + '</td>'
+                + '      <td class="fire-brand" rowspan="6">올패스<br>공무원독학원<br><span>직인생략</span></td>'
+                + '    </tr>'
+                + '    <tr><th>응시번호</th><td>' + escapeHtml(s.id || '-') + '</td><th>응시지역</th><td>' + escapeHtml(s.region || '-') + '</td></tr>'
+                + '    <tr><th>응시분야</th><td>' + escapeHtml(s.examField || '-') + '</td><th>응시계급</th><td>' + escapeHtml(s.examRank || '-') + '</td></tr>'
+                + '    <tr><th>시험회차</th><td colspan="3">' + escapeHtml((e.id || '-') + ' / ' + (e.name || '-')) + '</td></tr>'
+                + '    <tr><th>발급일시</th><td colspan="3">' + escapeHtml(normalizeDateText(new Date(), '.')) + '</td></tr>'
+                + '    <tr><th>시험장소</th><td colspan="3">' + escapeHtml(s.examLocation || '-') + '</td></tr>'
+                + '    <tr><th>시험과목</th><td colspan="5">' + escapeHtml(subjectText || '-') + '</td></tr>'
+                + '  </table>'
+                + '  <div class="admit-notice">'
+                + '    <div class="admit-notice-title">[안 내 사 항]</div>'
+                + '    <p>응시표를 분실하였을 때는 올패스공무원독학원으로 문의해 주시기 바랍니다.</p>'
+                + '    <p>시험 당일에는 응시표와 신분증을 반드시 지참해 주세요.</p>'
+                + '    <p>시험 관련 세부 공지와 성적 발표 일정은 별도 안내를 따릅니다.</p>'
+                + '  </div>'
+                + '</div>';
+        }
+
+        function normalizeDateText(value, delimiter) {
+            var d = delimiter || '.';
+            var s = String(value || '').trim();
+            if (!s) return '-';
+            var date = new Date(s);
+            if (!isNaN(date.getTime())) {
+                var yy = String(date.getFullYear());
+                var mm = ('0' + (date.getMonth() + 1)).slice(-2);
+                var dd = ('0' + date.getDate()).slice(-2);
+                return yy + d + mm + d + dd;
+            }
+            var m = s.match(/(\d{4})\D?(\d{1,2})\D?(\d{1,2})/);
+            if (!m) return s;
+            return m[1] + d + ('0' + m[2]).slice(-2) + d + ('0' + m[3]).slice(-2);
+        }
+
+        function formatResidentNumber(birthDate) {
+            var normalized = normalizeDateText(birthDate, '.');
+            var m = normalized.match(/(\d{4})\.(\d{2})\.(\d{2})/);
+            if (!m) return '******-*******';
+            return m[1].slice(2) + m[2] + m[3] + '-*******';
+        }
+
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function numberOrZero(v) {
+            var n = Number(v);
+            return isNaN(n) ? 0 : n;
+        }
+
+        function fmt1(v) {
+            return numberOrZero(v).toFixed(1);
+        }
+
+        function fmtPct(v) {
+            return fmt1(v) + '%';
+        }
+
+        function toTopPercentFromRank(rank, totalCount) {
+            var r = numberOrZero(rank);
+            var n = numberOrZero(totalCount);
+            if (n <= 0 || r <= 0) return 100;
+            var top = ((r - 1) / n) * 100;
+            if (!isFinite(top)) return 100;
+            if (top < 0) top = 0;
+            if (top > 100) top = 100;
+            return Number(top.toFixed(1));
+        }
+
+        function destroyChart(chart) {
+            if (chart) chart.destroy();
+            return null;
+        }
+
+        function switchAnalysisDetailTab(tabName) {
+            var tabs = {
+                overview: 'detailTabOverview',
+                subject: 'detailTabSubject',
+                item: 'detailTabItem',
+                killer: 'detailTabKiller',
+                competitor: 'detailTabCompetitor',
+                regional: 'detailTabRegional',
+                distribution: 'detailTabDistribution'
+            };
+            var panels = {
+                overview: 'analysisPanelOverview',
+                subject: 'analysisPanelSubject',
+                item: 'analysisPanelItem',
+                killer: 'analysisPanelKiller',
+                competitor: 'analysisPanelCompetitor',
+                regional: 'analysisPanelRegional',
+                distribution: 'analysisPanelDistribution'
+            };
+
+            Object.keys(tabs).forEach(function (key) {
+                var tab = document.getElementById(tabs[key]);
+                if (tab) tab.classList.toggle('active', key === tabName);
+            });
+            Object.keys(panels).forEach(function (key) {
+                var panel = document.getElementById(panels[key]);
+                if (!panel) return;
+                panel.style.display = (key === tabName) ? 'block' : 'none';
+                panel.classList.toggle('active', key === tabName);
+            });
+
+            // 숨김 상태(display:none)에서 생성된 차트는 크기가 0으로 계산될 수 있어
+            // 탭 활성화 직후 해당 패널만 다시 렌더링한다.
+            if (!currentData) return;
+            setTimeout(function () {
+                if (tabName === 'overview') {
+                    renderOverviewPanel(currentData);
+                } else if (tabName === 'subject') {
+                    renderSubjectPanel(currentData);
+                } else if (tabName === 'item') {
+                    renderItemPanel(currentData, selectedItemSubjectIdx);
+                } else if (tabName === 'killer') {
+                    renderKillerPanel(currentData, selectedKillerSubjectIdx);
+                } else if (tabName === 'regional') {
+                    renderRegionalPanel(currentData);
+                } else if (tabName === 'distribution') {
+                    renderDistributionPanel(currentData);
+                } else if (tabName === 'competitor') {
+                    renderCompetitorPanel(currentData);
+                }
+            }, 0);
+        }
+
+        function renderDashboard(data) {
+            if (!data || !data.student || !data.exam) {
+                throw new Error('필수 분석 데이터가 누락되었습니다.');
+            }
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('examSelectSection').style.display = 'none';
+            document.getElementById('dashboardSection').style.display = 'block';
+            document.body.classList.remove('printing-admit');
+
+            // 상단 요약
+            document.getElementById('studentNameTitle').innerText = '반갑습니다, ' + data.student.name + '님';
+            document.getElementById('examNameTitle').innerText = data.exam.name + ' 분석 결과입니다.';
+            document.getElementById('myTotalScore').innerText = fmt1(data.myScore.total);
+            var scoreTotalMaxLabel = document.getElementById('scoreTotalMaxLabel');
+            if (scoreTotalMaxLabel) {
+                var scoreMax = numberOrZero(data.distribution && data.distribution.totalMax);
+                scoreTotalMaxLabel.innerText = '만점 ' + (scoreMax > 0 ? scoreMax : 250) + '점';
+            }
+            document.getElementById('myOverallRank').innerText = data.ranks.overall + ' / ' + data.ranks.totalCount;
+            var myTopPercent = (data.ranks && data.ranks.topPercent != null)
+                ? numberOrZero(data.ranks.topPercent)
+                : toTopPercentFromRank(data.ranks.overall, data.ranks.totalCount);
+            document.getElementById('myPercentile').innerText = '상위 ' + fmtPct(myTopPercent);
+            document.getElementById('myRegionalRank').innerText = data.ranks.regional + ' / ' + data.ranks.regionalCount;
+            document.getElementById('myRegionName').innerText = (data.student.region || '미지정') + ' 지역 경쟁자 기준';
+            var myRegionalTopPercent = (data.ranks && data.ranks.regionalTopPercent != null)
+                ? numberOrZero(data.ranks.regionalTopPercent)
+                : toTopPercentFromRank(data.ranks.regional, data.ranks.regionalCount);
+            document.getElementById('myRegionalPercentile').innerText = fmtPct(myRegionalTopPercent);
+
+            renderOverviewPanel(data);
+            renderSubjectPanel(data);
+            renderItemPanel(data, -1);
+            renderKillerPanel(data, -1);
+            renderCompetitorPanel(data);
+            renderRegionalPanel(data);
+            renderDistributionPanel(data);
+            renderRankingPanel(data);
+
+            updatePyramidHighlight(myTopPercent);
+
+            // 수험표 렌더링 및 기본 탭
+            renderAdmitTicket(data);
+            switchDashboardTab('analysis');
+            switchAnalysisDetailTab('overview');
+        }
+
+        function renderOverviewPanel(data) {
+            var s = data.student || {};
+            var e = data.exam || {};
+            var r = data.ranks || {};
+            var st = data.stats || {};
+            var subjects = st.subjects || [];
+
+            var infoBody = document.getElementById('candidateInfoTableBody');
+            if (infoBody) {
+                infoBody.innerHTML = '<tr>'
+                    + '<td>' + escapeHtml(normalizeDateText(e.date, '-')) + '</td>'
+                    + '<td>' + escapeHtml((s.examField || s.type || '-') + (s.examRank ? ' / ' + s.examRank : '')) + '</td>'
+                    + '<td>' + escapeHtml(s.name || '-') + '</td>'
+                    + '<td>' + escapeHtml(s.id || '-') + '</td>'
+                    + '<td>' + escapeHtml((r.overall || '-') + ' / ' + (r.totalCount || '-')) + '</td>'
+                    + '</tr>';
+            }
+
+            renderOverviewCompareChart(data);
+
+            // 통합 과목 분석 테이블 채우기
+            var integratedBody = document.getElementById('integratedSubjectTableBody');
+            if (integratedBody) {
+                integratedBody.innerHTML = subjects.map(function (row) {
+                    return '<tr>'
+                        + '<td><strong>' + escapeHtml(row.name) + '</strong></td>'
+                        + '<td>' + fmt1(row.my) + '</td>'
+                        + '<td>' + fmtPct((row.topPercent != null)
+                            ? numberOrZero(row.topPercent)
+                            : toTopPercentFromRank(row.myRank, row.totalCount)) + '</td>'
+                        + '<td>' + escapeHtml((row.myRank || '-') + '위 / ' + (row.totalCount || '-')) + '</td>'
+                        + '<td>' + fmt1(row.max) + '</td>'
+                        + '<td>' + fmt1(row.top10Avg) + '</td>'
+                        + '</tr>';
+                }).join('');
+            }
+
+            var integratedTotal = document.getElementById('integratedSubjectTotalRow');
+            if (integratedTotal) {
+                integratedTotal.innerHTML = '<tr style="background:#f1f3f5; font-weight:bold;">'
+                    + '<td>총계</td>'
+                    + '<td>' + fmt1(data.myScore.total) + '</td>'
+                    + '<td>' + fmtPct((r.topPercent != null)
+                        ? numberOrZero(r.topPercent)
+                        : toTopPercentFromRank(r.overall, r.totalCount)) + '</td>'
+                    + '<td>' + escapeHtml((r.overall || '-') + '위 / ' + (r.totalCount || '-')) + '</td>'
+                    + '<td>' + fmt1(st.maxTotal) + '</td>'
+                    + '<td>' + fmt1(st.top10TotalAvg) + '</td>'
+                    + '</tr>';
+            }
+
+            // 피라미드 하이라이트 및 텍스트 업데이트
+            var topPercent = (r.topPercent != null)
+                ? numberOrZero(r.topPercent)
+                : toTopPercentFromRank(r.overall, r.totalCount);
+            var reliability = (st && st.predictionReliability) || {};
+            var isReliable = reliability.isReliable !== false;
+            updatePyramidHighlight(topPercent, isReliable);
+            var pStatus = document.getElementById('pyramidStatusText');
+            var pReliability = document.getElementById('pyramidReliabilityNote');
+            if (pReliability) {
+                if (!isReliable) {
+                    pReliability.innerText = '(참고치: 표본 ' + numberOrZero(reliability.totalCount || r.totalCount) + '명)';
+                } else {
+                    pReliability.innerText = '';
+                }
+            }
+            if (pStatus) {
+                if (!isReliable) pStatus.innerText = '참고치';
+                else if (topPercent <= 5) pStatus.innerText = '합격 확실권';
+                else if (topPercent <= 15) pStatus.innerText = '합격 유력권';
+                else if (topPercent <= 30) pStatus.innerText = '합격 가능권';
+                else pStatus.innerText = '합격 도전권';
+            }
+
+            // 과목 균형 분석 추가 (종합 현황으로 이동)
+            var balanceText = document.getElementById('balanceScoreText');
+            if (balanceText && data.stats && data.stats.balanceScore) {
+                var bs = data.stats.balanceScore;
+                balanceText.innerHTML = '과목 간 성취도 표준편차(정규화): <strong>' + fmt1(bs.stdDev) + '%p</strong> | 균형도 평가: <strong>' + (bs.assessment || '-') + '</strong>';
+            }
+
+            // 경고 메시지 추가 (종합 현황으로 이동)
+            var warningsBox = document.getElementById('warningsBox');
+            if (warningsBox) {
+                var warnings = data.warnings || [];
+                if (warnings.length === 0) {
+                    warningsBox.innerHTML = '<div class="warning-item success">전 과목 균형감 있게 학습 중입니다. 우수한 성취도입니다.</div>';
+                } else {
+                    warningsBox.innerHTML = warnings.map(function (w) {
+                        return '<div class="warning-item"><span class="warning-prefix">x</span>' + escapeHtml(w) + '</div>';
+                    }).join('');
+                }
+            }
+        }
+
+        function renderSubjectPanel(data) {
+            var subjects = (data.stats && data.stats.subjects) || [];
+            var body = document.getElementById('subjectGradeTableBody');
+            if (body) {
+                body.innerHTML = subjects.map(function (s) {
+                    var myScore = fmt1(s.my);
+                    var avgScore = fmt1(s.avg);
+                    var top10Avg = fmt1(s.top10Avg);
+                    var rankInfo = s.myRank + ' / ' + s.totalCount;
+                    var topPct = fmtPct(s.topPercent);
+
+                    var gradeClass = '';
+                    if (s.grade === '우수') gradeClass = 'text-success';
+                    else if (s.grade === '취약') gradeClass = 'text-danger';
+
+                    return '<tr>'
+                        + '<td>' + escapeHtml(s.name) + '</td>'
+                        + '<td style="font-weight:700; color:var(--primary-color);">' + myScore + '</td>'
+                        + '<td>' + avgScore + '</td>'
+                        + '<td>' + top10Avg + '</td>'
+                        + '<td>' + rankInfo + '</td>'
+                        + '<td>' + topPct + '</td>'
+                        + '<td class="' + gradeClass + '" style="font-weight:700;">' + escapeHtml(s.grade || '-') + '</td>'
+                        + '</tr>';
+                }).join('');
+            }
+            renderRadarChart(subjects);
+            renderSubjectAvgBarChart(subjects);
+        }
+
+        function renderItemPanel(data, filterSubjectIdx) {
+            if (filterSubjectIdx !== undefined) selectedItemSubjectIdx = filterSubjectIdx;
+            else selectedItemSubjectIdx = -1;
+
+            var subjects = (data.exam && data.exam.subjects) || [];
+            renderSubjectFilterButtons('itemSubjectFilters', subjects, selectedItemSubjectIdx, 'switchItemSubject');
+
+            var allItems = (data.itemAnalysis || []).slice().sort(function (a, b) { return numberOrZero(a.num) - numberOrZero(b.num); });
+            var items = allItems;
+
+            if (selectedItemSubjectIdx !== -1) {
+                var sName = subjects[selectedItemSubjectIdx];
+                items = allItems.filter(function (q) {
+                    return isItemInSubject(q, sName, selectedItemSubjectIdx, data);
+                });
+            }
+
+            var body = document.getElementById('itemScoreTableBody');
+            if (body) {
+                if (items.length === 0) {
+                    body.innerHTML = '<tr><td colspan="7" class="empty-cell">해당 과목의 문항 데이터가 없습니다.</td></tr>';
+                } else {
+                    body.innerHTML = items.map(function (q) {
+                        var studentAnswer = q.studentAnswer || (q.my === 'O' ? q.answer : (q.my === 'X' ? '오답' : '-'));
+                        var sName = getItemSubjectName(q, data);
+                        return '<tr>'
+                            + '<td>' + escapeHtml(q.num) + '</td>'
+                            + '<td>' + escapeHtml(sName) + '</td>'
+                            + '<td>' + escapeHtml(q.answer) + '</td>'
+                            + '<td>' + escapeHtml(studentAnswer) + '</td>'
+                            + '<td>' + escapeHtml(q.my || '-') + '</td>'
+                            + '<td>' + fmtPct(q.correctRate) + '</td>'
+                            + '<td>' + escapeHtml(q.difficulty || '-') + '</td>'
+                            + '</tr>';
+                    }).join('');
+                }
+            }
+
+            var itemStats = data.itemStats || {};
+            var itemText = document.getElementById('itemStatsText');
+            if (itemText) {
+                itemText.textContent = '총 ' + (itemStats.totalItems || 0) + '문항 중 정답 '
+                    + (itemStats.correctCount || 0) + '개, 오답 ' + (itemStats.wrongCount || 0)
+                    + '개, 정답률 ' + fmtPct(itemStats.myCorrectRate || 0);
+            }
+
+
+            // 킬러 정복률 추가
+            var killerText = document.getElementById('killerConquerText');
+            if (killerText && data.itemStats) {
+                killerText.textContent = (data.itemStats.killerTotal || 0) + '개 중 '
+                    + (data.itemStats.killerCorrect || 0) + '개 정복 ('
+                    + fmtPct(data.itemStats.killerConquerRate || 0) + ')';
+            }
+
+            // 나만 틀린 문제 추가
+            var easyMissedBody = document.getElementById('easyMissedTableBody');
+            if (easyMissedBody) {
+                var easyMissed = data.easyMissedQuestions || [];
+                if (easyMissed.length === 0) {
+                    easyMissedBody.innerHTML = '<tr><td colspan="2" style="color:var(--primary-color);">정답률이 높은 문제를 모두 맞혔습니다! 기본기가 탄탄하시네요.</td></tr>';
+                } else {
+                    easyMissedBody.innerHTML = easyMissed.map(function (q) {
+                        return '<tr>'
+                            + '<td>' + escapeHtml(q.num) + '</td>'
+                            + '<td>' + fmtPct(q.correctRate) + '</td>'
+                            + '</tr>';
+                    }).join('');
+                }
+            }
+        }
+
+        function renderKillerPanel(data, filterSubjectIdx) {
+            if (filterSubjectIdx !== undefined) selectedKillerSubjectIdx = filterSubjectIdx;
+            else selectedKillerSubjectIdx = -1;
+
+            var subjects = (data.exam && data.exam.subjects) || [];
+            renderSubjectFilterButtons('killerSubjectFilters', subjects, selectedKillerSubjectIdx, 'switchKillerSubject');
+
+            var allKillers = data.killerQuestions || [];
+            var killerQuestions = allKillers;
+
+            if (selectedKillerSubjectIdx !== -1) {
+                var sName = subjects[selectedKillerSubjectIdx];
+                killerQuestions = allKillers.filter(function (q) {
+                    return isItemInSubject(q, sName, selectedKillerSubjectIdx, data);
+                });
+            }
+
+            var killerBody = document.getElementById('killerTableBody');
+            if (killerBody) {
+                if (killerQuestions.length === 0) {
+                    killerBody.innerHTML = '<tr><td colspan="6" class="empty-cell">해당 과목의 오답 데이터가 없습니다.</td></tr>';
+                } else {
+                    killerBody.innerHTML = killerQuestions.map(function (q, idx) {
+                        var mine = q.my === 'O' ? 'O' : (q.my === 'X' ? 'X' : '-');
+                        var wrongRate = numberOrZero(100 - numberOrZero(q.correctRate));
+                        var sName = getItemSubjectName(q, data);
+                        return '<tr>'
+                            + '<td>' + (idx + 1) + '</td>'
+                            + '<td>' + escapeHtml(q.num) + '</td>'
+                            + '<td>' + escapeHtml(sName) + '</td>'
+                            + '<td>' + fmtPct(q.correctRate) + '</td>'
+                            + '<td>' + fmtPct(wrongRate) + '</td>'
+                            + '<td>' + mine + '</td>'
+                            + '</tr>';
+                    }).join('');
+                }
+            }
+
+        }
+
+        function renderRegionalPanel(data) {
+            var rg = data.regional || {};
+            var tbody = document.getElementById('regionalStatsBody');
+            if (tbody) {
+                tbody.innerHTML = '<tr>'
+                    + '<td>' + escapeHtml(rg.regionName || '미지정') + '</td>'
+                    + '<td>' + escapeHtml((rg.rank || '-') + ' / ' + (rg.count || '-')) + '</td>'
+                    + '<td>' + fmtPct((rg.topPercent != null)
+                        ? numberOrZero(rg.topPercent)
+                        : toTopPercentFromRank(rg.rank, rg.count)) + '</td>'
+                    + '<td>' + fmt1(rg.avgTotal) + '</td>'
+                    + '<td>' + fmt1(rg.top10AvgTotal) + '</td>'
+                    + '</tr>';
+            }
+            renderRegionalCompareChart(data);
+        }
+
+        function renderCompetitorPanel(data) {
+            var tbody = document.getElementById('competitorTableBody');
+            if (!tbody) return;
+            var rows = data.competitors || [];
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="6">비교 가능한 경쟁자 데이터가 없습니다.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(function (r, idx) {
+                var gap = numberOrZero(r.gapFromMe);
+                var gapText = gap === 0 ? '기준점수' : ((gap > 0 ? '+' : '') + fmt1(gap));
+                var rs = r.responseSummary || {};
+                var responseText = '정답 ' + numberOrZero(rs.correct)
+                    + ' / 오답 ' + numberOrZero(rs.wrong)
+                    + ' / 선택지 ' + numberOrZero(rs.choice);
+                return '<tr>'
+                    + '<td>' + escapeHtml(r.rank) + '</td>'
+                    + '<td><a href="javascript:void(0)" onclick="openCompetitorModal(' + idx + ')" style="color:var(--primary-color); font-weight:700; text-decoration:underline;">' + escapeHtml(r.studentIdMasked || '-') + '</a></td>'
+                    + '<td>' + fmt1(r.total) + '</td>'
+                    + '<td>' + gapText + '</td>'
+                    + '<td>' + escapeHtml(r.zone || '-') + '</td>'
+                    + '<td>' + escapeHtml(responseText) + '</td>'
+                    + '</tr>';
+            }).join('');
+        }
+
+        function openCompetitorModal(index) {
+            if (!currentData || !currentData.competitors || !currentData.competitors[index]) return;
+            var comp = currentData.competitors[index];
+            var infoBox = document.getElementById('modalCompetitorInfo');
+            if (infoBox) {
+                infoBox.innerHTML = '⚡ 응시자: <strong>' + escapeHtml(comp.studentIdMasked) + '</strong> | 총점: <strong>' + fmt1(comp.total) + '점</strong>';
+            }
+
+            var btnRow = document.getElementById('modalSubjectButtons');
+            var subjects = (currentData.exam && Array.isArray(currentData.exam.subjects))
+                ? currentData.exam.subjects.filter(function (s) { return !!String(s || '').trim(); })
+                : [];
+            if (!subjects.length) subjects = ['전체'];
+            if (btnRow) {
+                btnRow.innerHTML = subjects.map(function (sName, sIdx) {
+                    return '<button class="modal-tab-btn' + (sIdx === 0 ? ' active' : '') + '" onclick="renderCompetitorDetailContent(' + index + ',' + sIdx + ')">' + escapeHtml(sName) + '</button>';
+                }).join('');
+            }
+
+            document.getElementById('competitorModal').style.display = 'flex';
+            renderCompetitorDetailContent(index, 0); // 첫 번째 과목 기본 선택
+        }
+
+        function closeCompetitorModal() {
+            document.getElementById('competitorModal').style.display = 'none';
+        }
+
+        function closeCompetitorModalOnOverlay(event) {
+            if (event && event.target && event.target.id === 'competitorModal') {
+                closeCompetitorModal();
+            }
+        }
+
+        function renderCompetitorDetailContent(compIndex, subjectIdx) {
+            if (!currentData || !currentData.competitors || !currentData.competitors[compIndex]) return;
+            var comp = currentData.competitors[compIndex];
+            var subjects = (currentData.exam && Array.isArray(currentData.exam.subjects))
+                ? currentData.exam.subjects.filter(function (s) { return !!String(s || '').trim(); })
+                : [];
+            if (!subjects.length) subjects = ['전체'];
+            if (subjectIdx < 0 || subjectIdx >= subjects.length) subjectIdx = 0;
+            var itemAnalysis = (currentData.itemAnalysis || []).slice().sort(function (a, b) {
+                return numberOrZero(a.num) - numberOrZero(b.num);
+            });
+            var btns = document.querySelectorAll('.modal-tab-btn');
+            btns.forEach(function (btn, i) {
+                btn.classList.toggle('active', i === subjectIdx);
+            });
+
+            var tbody = document.getElementById('modalDetailTableBody');
+            if (!tbody) return;
+
+            var subjectItems = itemAnalysis;
+            if (subjects.length > 1) {
+                var subjectName = String(subjects[subjectIdx] || '').trim();
+                subjectItems = itemAnalysis.filter(function (q) {
+                    return String((q && q.subject) || '').trim() === subjectName;
+                });
+
+                // subject 정보가 없으면 백엔드에서 내려준 과목별 문항수 기준으로 분할
+                if (!subjectItems.length) {
+                    var subjectItemCounts = (currentData.exam && Array.isArray(currentData.exam.subjectItemCounts))
+                        ? currentData.exam.subjectItemCounts.map(function (v) { return numberOrZero(v); })
+                        : [];
+                    var totalByCounts = subjectItemCounts.reduce(function (acc, v) { return acc + v; }, 0);
+                    if (subjectItemCounts.length === subjects.length && totalByCounts > 0) {
+                        var startNo = 1;
+                        for (var c = 0; c < subjectIdx; c++) startNo += subjectItemCounts[c];
+                        var endNo = startNo + subjectItemCounts[subjectIdx] - 1;
+                        subjectItems = itemAnalysis.filter(function (q) {
+                            var qNo = numberOrZero(q.num);
+                            return qNo >= startNo && qNo <= endNo;
+                        });
+                    }
+                }
+
+                // 최후 fallback: 기존 균등 분할
+                if (!subjectItems.length) {
+                    var totalItems = itemAnalysis.length;
+                    var base = Math.floor(totalItems / subjects.length);
+                    var remainder = totalItems % subjects.length;
+                    var startIdx = 0;
+                    for (var i = 0; i < subjectIdx; i++) {
+                        startIdx += base + (i < remainder ? 1 : 0);
+                    }
+                    var size = base + (subjectIdx < remainder ? 1 : 0);
+                    subjectItems = itemAnalysis.slice(startIdx, startIdx + size);
+                }
+            }
+
+            if (!subjectItems.length) {
+                tbody.innerHTML = '<tr><td colspan="4">해당 과목 문항 데이터가 없습니다.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = subjectItems.map(function (q) {
+                var raw = (comp.items && comp.items[q.num - 1]) ? String(comp.items[q.num - 1]).trim() : '-';
+                var rawUpper = raw.toUpperCase();
+                var answer = String(q.answer || '-').trim();
+                var answerUpper = answer.toUpperCase();
+                var result = '-';
+                if (rawUpper === 'O' || rawUpper === 'X') {
+                    result = rawUpper;
+                } else if (raw && raw !== '-' && answer && answer !== '-') {
+                    result = (rawUpper === answerUpper) ? 'O' : 'X';
+                }
+                var inputAnswer = '-';
+                if (rawUpper === 'O') inputAnswer = (answer && answer !== '-') ? answer : 'O';
+                else if (rawUpper === 'X') inputAnswer = '오답(X)';
+                else inputAnswer = raw || '-';
+
+                return '<tr>'
+                    + '<td>' + escapeHtml(q.num) + '</td>'
+                    + '<td>' + escapeHtml(inputAnswer) + '</td>'
+                    + '<td>' + escapeHtml(answer || '-') + '</td>'
+                    + '<td><span style="color:' + (result === 'O' ? '#2b8a3e' : (result === 'X' ? '#e03131' : '#868e96')) + '; font-weight:bold;">' + escapeHtml(result) + '</span></td>'
+                    + '</tr>';
+            }).join('');
+        }
+
+        function findDistributionBinIndex_(bins, score) {
+            if (!bins || bins.length === 0 || score < 0) return -1;
+
+            for (var i = 0; i < bins.length; i++) {
+                var low = numberOrZero(bins[i].threshold);
+                var high = numberOrZero(bins[i].upper);
+                if (high < low) {
+                    var tmp = low;
+                    low = high;
+                    high = tmp;
+                }
+                if (score >= low && score <= high) return i;
+            }
+
+            var closestIdx = -1;
+            var closestDist = Number.POSITIVE_INFINITY;
+            for (var i = 0; i < bins.length; i++) {
+                var low = numberOrZero(bins[i].threshold);
+                var high = numberOrZero(bins[i].upper);
+                var mid = (low + high) / 2;
+                var dist = Math.abs(score - mid);
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closestIdx = i;
+                }
+            }
+            return closestIdx;
+        }
+
+        function getDistributionBandLabel_(bin, idx) {
+            if (!bin) return '-';
+            if (bin.bandLabel) return String(bin.bandLabel);
+            if (bin.shortLabel) return String(bin.shortLabel);
+            return String((idx + 1)) + '등급';
+        }
+
+        function getDistributionRangeLabel_(bin, idx, bins) {
+            if (!bin) return '-';
+            var lower = numberOrZero(bin.threshold);
+            var upper = numberOrZero(bin.upper);
+            if (upper < lower) {
+                var temp = lower;
+                lower = upper;
+                upper = temp;
+            }
+            if (lower === upper) return lower + '점';
+            return lower + '~' + upper + '점';
+        }
+
+        function renderDistributionPanel(data) {
+            var dist = data.distribution || {};
+            var bins = dist.bins || [];
+            var metaEl = document.getElementById('distributionMeta');
+            var myTotal = (data.myScore && data.myScore.total != null) ? numberOrZero(data.myScore.total) : -1;
+            var myBinIdx = (dist.myBinIndex != null) ? numberOrZero(dist.myBinIndex) : findDistributionBinIndex_(bins, myTotal);
+            if (myBinIdx >= bins.length) myBinIdx = bins.length - 1;
+
+            if (metaEl) {
+                if (!bins.length) {
+                    metaEl.innerHTML = '<span class="distribution-pill"><strong>분포 데이터 없음</strong></span>';
+                } else {
+                    var myRange = myBinIdx >= 0 ? getDistributionRangeLabel_(bins[myBinIdx], myBinIdx, bins) : '-';
+                    var myBand = myBinIdx >= 0 ? getDistributionBandLabel_(bins[myBinIdx], myBinIdx) : '-';
+                    var chips = [
+                        { k: '응시자', v: (data.ranks && data.ranks.totalCount != null) ? numberOrZero(data.ranks.totalCount) + '명' : '-' },
+                        { k: '분포 방식', v: '10등급' },
+                        { k: '내 등급', v: myBand },
+                        { k: '내 점수 구간', v: myRange }
+                    ];
+                    metaEl.innerHTML = chips.map(function (chip) {
+                        return '<span class="distribution-pill"><strong>' + chip.k + '</strong> ' + escapeHtml(chip.v) + '</span>';
+                    }).join('');
+                }
+            }
+
+            renderDistributionChart(bins, myBinIdx);
+        }
+
+        function renderRankingPanel(data) {
+            var list = data.overallRanking || [];
+            var subjects = (data.exam && data.exam.subjects) || [];
+            var head = document.getElementById('rankingTableHeader');
+            var body = document.getElementById('rankingTableBody');
+            if (!head || !body) return;
+
+            // 헤더 동적 생성 (요구사항 순서: 수험번호 / 이름 / 응시지역 / 과목별 점수 / 석차)
+            var headerHtml = '<tr>'
+                + '<th>수험번호</th>'
+                + '<th>응시지역</th>';
+
+            subjects.forEach(function (s) {
+                headerHtml += '<th>' + escapeHtml(s) + '</th>';
+            });
+
+            headerHtml += '<th>총점</th>';
+            headerHtml += '<th>석차</th>';
+            headerHtml += '</tr>';
+            head.innerHTML = headerHtml;
+
+            // 데이터 행 생성
+            if (!list.length) {
+                body.innerHTML = '<tr><td colspan="' + (4 + subjects.length) + '">데이터가 없습니다.</td></tr>';
+                return;
+            }
+
+            body.innerHTML = list.map(function (row) {
+                var isMe = row.isMe;
+                var rowClass = isMe ? ' style="background-color:rgba(52,152,219,0.1); font-weight:700;"' : '';
+
+                var html = '<tr' + rowClass + '>'
+                    + '<td>' + escapeHtml(row.studentIdMasked) + '</td>'
+                    + '<td>' + escapeHtml(row.region || '미지정') + '</td>';
+
+                html += '<td>' + fmt1(row.s1) + '</td>';
+                html += '<td>' + fmt1(row.s2) + '</td>';
+                if (subjects.length >= 3) {
+                    html += '<td>' + fmt1(row.s3) + '</td>';
+                }
+
+                html += '<td style="color:var(--primary-color); font-weight:700;">' + fmt1(row.total) + '</td>';
+                html += '<td>' + row.rank + '</td>';
+                html += '</tr>';
+                return html;
+            }).join('');
+        }
+
+        function renderSubjectPercentileChart(data) {
+            var canvas = document.getElementById('subjectPercentileChart');
+            if (!canvas) return;
+            subjectPercentileChart = destroyChart(subjectPercentileChart);
+            var ctx = canvas.getContext('2d');
+
+            var subjects = (data.stats && data.stats.subjects) || [];
+            var labels = ['총점'].concat(subjects.map(function (s) { return s.name; }));
+            var percentileData = [data.ranks && data.ranks.topPercent != null
+                ? numberOrZero(data.ranks.topPercent)
+                : toTopPercentFromRank(data.ranks.overall, data.ranks.totalCount)]
+                .concat(subjects.map(function (s) {
+                    return (s.topPercent != null)
+                        ? numberOrZero(s.topPercent)
+                        : toTopPercentFromRank(s.myRank, s.totalCount);
+                }));
+
+            subjectPercentileChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '상위 백분위(%)',
+                        data: percentileData,
+                        backgroundColor: function (context) {
+                            return context.dataIndex === 0 ? '#00bcd4' : '#3366ff';
+                        },
+                        borderRadius: 4,
+                        barThickness: 40
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: { color: '#f1f3f5' },
+                            ticks: { callback: function (v) { return v + '%'; } }
+                        },
+                        x: { grid: { display: false } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    return context.raw + '%';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            var headerRow = document.getElementById('percentileTableHeaderRow');
+            var body = document.getElementById('percentileTableBody');
+            if (headerRow && body) {
+                headerRow.innerHTML = '<th>구분</th><th>총점</th>' + subjects.map(function (s) {
+                    return '<th>' + escapeHtml(s.name) + '</th>';
+                }).join('');
+
+                var rowScore = '<tr><td>원점수</td><td>' + fmt1(data.myScore.total) + '</td>' + subjects.map(function (s) {
+                    return '<td>' + fmt1(s.my) + '</td>';
+                }).join('') + '</tr>';
+
+                var rowPct = '<tr><td>상위 백분위(%)</td><td>' + fmtPct((data.ranks && data.ranks.topPercent != null)
+                    ? numberOrZero(data.ranks.topPercent)
+                    : toTopPercentFromRank(data.ranks.overall, data.ranks.totalCount)) + '</td>' + subjects.map(function (s) {
+                        return '<td>' + fmtPct((s.topPercent != null)
+                            ? numberOrZero(s.topPercent)
+                            : toTopPercentFromRank(s.myRank, s.totalCount)) + '</td>';
+                    }).join('') + '</tr>';
+
+                body.innerHTML = rowScore + rowPct;
+            }
+        }
+
+        function renderOverviewCompareChart(data) {
+            var canvas = document.getElementById('overviewCompareChart');
+            if (!canvas) return;
+            overviewCompareChart = destroyChart(overviewCompareChart);
+            var ctx = canvas.getContext('2d');
+
+            var st = data.stats || {};
+            var labels = ['최고점', '내 점수', '상위10%', '상위30%'];
+            var chartData = [
+                numberOrZero(st.maxTotal),
+                numberOrZero(data.myScore.total),
+                numberOrZero(st.top10TotalAvg),
+                numberOrZero(st.top30TotalAvg)
+            ];
+
+            overviewCompareChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '점수',
+                        data: chartData,
+                        backgroundColor: function (context) {
+                            var label = context.chart.data.labels[context.dataIndex];
+                            if (label === '내 점수') return '#335fe1';
+                            if (label === '상위10%') return '#7cc069';
+                            return '#e9ecef';
+                        },
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#f1f3f5' }
+                        },
+                        x: { grid: { display: false } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            enabled: true,
+                            backgroundColor: '#212529',
+                            titleAlign: 'center',
+                            bodyAlign: 'center',
+                            callbacks: {
+                                label: function (context) {
+                                    return context.raw + '점';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updatePyramidHighlight(topPercent, isReliable) {
+            document.querySelectorAll('.pyramid-layer').forEach(function (el) { el.classList.remove('highlight'); });
+            if (isReliable === false) return;
+
+            var id = '';
+            if (topPercent <= 5) id = 'p-sure';
+            else if (topPercent <= 15) id = 'p-likely';
+            else if (topPercent <= 30) id = 'p-possible';
+            else id = 'p-challenge';
+
+            var target = document.getElementById(id);
+            if (target) target.classList.add('highlight');
+        }
+
+        function renderRadarChart(subjects) {
+            var canvas = document.getElementById('radarChart');
+            if (!canvas) return;
+            radarChart = destroyChart(radarChart);
+            var ctx = canvas.getContext('2d');
+
+            var labels = subjects.map(function (s) { return s.name; });
+            var myData = subjects.map(function (s) {
+                var max = numberOrZero(s.max) || 100;
+                return (numberOrZero(s.my) / max) * 100;
+            });
+            var avgData = subjects.map(function (s) {
+                var max = numberOrZero(s.max) || 100;
+                return (numberOrZero(s.avg) / max) * 100;
+            });
+
+            radarChart = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '내 점수',
+                        data: myData,
+                        backgroundColor: 'rgba(52, 121, 255, 0.20)',
+                        borderColor: '#3479ff',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#3479ff'
+                    }, {
+                        label: '응시자 평균',
+                        data: avgData,
+                        backgroundColor: 'rgba(124, 192, 105, 0.20)',
+                        borderColor: '#7cc069',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#7cc069'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            angleLines: { color: '#e1e5ee' },
+                            grid: { color: '#e1e5ee' },
+                            pointLabels: { color: '#212529', font: { size: 13 } },
+                            ticks: { display: false, stepSize: 20 },
+                            suggestedMin: 0,
+                            suggestedMax: 100
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#212529' } }
+                    }
+                }
+            });
+        }
+
+        function renderSubjectAvgBarChart(subjects) {
+            var canvas = document.getElementById('subjectAvgBarChart');
+            if (!canvas) return;
+            subjectAvgBarChart = destroyChart(subjectAvgBarChart);
+            var ctx = canvas.getContext('2d');
+
+            subjectAvgBarChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: subjects.map(function (s) { return s.name; }),
+                    datasets: [{
+                        label: '응시자 평균',
+                        data: subjects.map(function (s) {
+                            var max = numberOrZero(s.max) || 100;
+                            return (numberOrZero(s.avg) / max) * 100;
+                        }),
+                        backgroundColor: '#7dbb64'
+                    }, {
+                        label: '내 점수',
+                        data: subjects.map(function (s) {
+                            var max = numberOrZero(s.max) || 100;
+                            return (numberOrZero(s.my) / max) * 100;
+                        }),
+                        backgroundColor: '#3c6ee8'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function renderRegionalCompareChart(data) {
+            var canvas = document.getElementById('regionalCompareChart');
+            if (!canvas) return;
+            regionalCompareChart = destroyChart(regionalCompareChart);
+            var ctx = canvas.getContext('2d');
+            var rg = data.regional || {};
+
+            regionalCompareChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['내 점수', '지역 평균', '지역 상위10%', '전체 평균'],
+                    datasets: [{
+                        label: '총점',
+                        data: [
+                            numberOrZero(rg.myTotal),
+                            numberOrZero(rg.avgTotal),
+                            numberOrZero(rg.top10AvgTotal),
+                            numberOrZero(data.stats.overallAvg)
+                        ],
+                        backgroundColor: ['#1aa6c8', '#6ea8fe', '#7cc069', '#b8becd']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function renderDistributionChart(bins, precomputedMyBinIdx) {
+            var canvas = document.getElementById('distributionChart');
+            if (!canvas) return;
+            distributionChart = destroyChart(distributionChart);
+            var ctx = canvas.getContext('2d');
+            if (!bins || bins.length === 0) return;
+
+            var myTotal = (currentData && currentData.myScore) ? numberOrZero(currentData.myScore.total) : -1;
+            var myBinIdx = (precomputedMyBinIdx != null && precomputedMyBinIdx >= 0)
+                ? precomputedMyBinIdx
+                : findDistributionBinIndex_(bins, myTotal);
+            var labels = bins.map(function (b, idx) {
+                return b.shortLabel ? String(b.shortLabel) : String(idx + 1) + '등급';
+            });
+
+            var isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+
+            distributionChart = new Chart(ctx, {
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        type: 'bar',
+                        label: '인원수',
+                        data: bins.map(function (b) { return numberOrZero(b.count); }),
+                        backgroundColor: function (context) {
+                            return context.dataIndex === myBinIdx ? '#ff9800' : '#5a74c4';
+                        },
+                        borderRadius: 4,
+                        yAxisID: 'yCount',
+                        maxBarThickness: 42
+                    }, {
+                        type: 'line',
+                        label: '비율(%)',
+                        data: bins.map(function (b) { return numberOrZero(b.ratio); }),
+                        yAxisID: 'yRatio',
+                        borderColor: '#17a2b8',
+                        backgroundColor: 'rgba(23, 162, 184, 0.15)',
+                        tension: 0.25,
+                        pointRadius: bins.length > 16 ? 2 : 3,
+                        pointHoverRadius: 4,
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    scales: {
+                        yCount: {
+                            beginAtZero: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: '인원수'
+                            },
+                            grid: { color: '#f1f3f5' }
+                        },
+                        yRatio: {
+                            beginAtZero: true,
+                            position: 'right',
+                            suggestedMax: 100,
+                            title: {
+                                display: true,
+                                text: '비율(%)'
+                            },
+                            ticks: {
+                                callback: function (v) { return v + '%'; }
+                            },
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                autoSkip: isMobile,
+                                maxTicksLimit: isMobile ? 8 : undefined,
+                                maxRotation: isMobile ? 45 : 0,
+                                minRotation: isMobile ? 45 : 0
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            labels: { usePointStyle: true }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function (items) {
+                                    var idx = items[0].dataIndex;
+                                    var band = getDistributionBandLabel_(bins[idx], idx);
+                                    var range = getDistributionRangeLabel_(bins[idx], idx, bins);
+                                    return band + ' (' + range + ')';
+                                },
+                                label: function (context) {
+                                    var idx = context.dataIndex;
+                                    if (context.dataset.yAxisID === 'yCount') {
+                                        var countLabel = '인원: ' + numberOrZero(bins[idx].count) + '명';
+                                        if (idx === myBinIdx) countLabel += ' (내 구간)';
+                                        return countLabel;
+                                    }
+                                    var ratioLabel = '비율: ' + fmtPct(numberOrZero(bins[idx].ratio));
+                                    if (idx === myBinIdx) ratioLabel += ' (내 구간)';
+                                    return ratioLabel;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        function renderSubjectFilterButtons(containerId, subjects, activeIdx, callbackName) {
+            var el = document.getElementById(containerId);
+            if (!el) return;
+            var html = '<button class="subject-filter-btn' + (activeIdx === -1 ? ' active' : '') + '" onclick="' + callbackName + '(-1)">전체</button>';
+            subjects.forEach(function (s, i) {
+                if (!s) return;
+                html += '<button class="subject-filter-btn' + (activeIdx === i ? ' active' : '') + '" onclick="' + callbackName + '(' + i + ')">' + escapeHtml(s) + '</button>';
+            });
+            el.innerHTML = html;
+        }
+
+        function switchItemSubject(idx) {
+            if (!currentData) return;
+            renderItemPanel(currentData, idx);
+        }
+
+        function switchKillerSubject(idx) {
+            if (!currentData) return;
+            renderKillerPanel(currentData, idx);
+        }
+
+        function getItemSubjectName(q, data) {
+            var subjects = (data.exam && data.exam.subjects) || [];
+            var subjectItemCounts = (data.exam && data.exam.subjectItemCounts) || [];
+
+            // 1. 직접 정보가 있는 경우
+            if (q.subject) return q.subject;
+
+            // 2. 과목별 문항수 정보를 이용한 매칭
+            if (Array.isArray(subjects) && Array.isArray(subjectItemCounts) && subjects.length === subjectItemCounts.length) {
+                var startNo = 1;
+                for (var i = 0; i < subjects.length; i++) {
+                    var count = numberOrZero(subjectItemCounts[i]);
+                    var endNo = startNo + count - 1;
+                    var qNo = numberOrZero(q.num);
+                    if (qNo >= startNo && qNo <= endNo) return subjects[i];
+                    startNo += count;
+                }
+            }
+
+            // 3. Fallback: 기존 균등 분할 논리
+            var totalItems = (data.itemAnalysis || []).length;
+            if (totalItems > 0 && subjects.length > 0) {
+                var base = Math.floor(totalItems / subjects.length);
+                var remainder = totalItems % subjects.length;
+                var startIdx = 0;
+                var qIdx = numberOrZero(q.num) - 1;
+                for (var i = 0; i < subjects.length; i++) {
+                    var size = base + (i < remainder ? 1 : 0);
+                    if (qIdx >= startIdx && qIdx < (startIdx + size)) return subjects[i];
+                    startIdx += size;
+                }
+            }
+            return '-';
+        }
+
+        function isItemInSubject(q, subjectName, subjectIdx, data) {
+            var subjects = (data.exam && data.exam.subjects) || [];
+            var subjectItemCounts = (data.exam && data.exam.subjectItemCounts) || [];
+
+            // 1. 문항 데이터에 직접 과목 정보가 있는 경우
+            if (q.subject && String(q.subject).trim() === String(subjectName).trim()) return true;
+
+            // 2. 과목별 문항수 정보를 이용한 매칭
+            if (Array.isArray(subjects) && Array.isArray(subjectItemCounts) && subjects.length === subjectItemCounts.length) {
+                var startNo = 1;
+                for (var i = 0; i < subjectIdx; i++) {
+                    startNo += numberOrZero(subjectItemCounts[i]);
+                }
+                var endNo = startNo + numberOrZero(subjectItemCounts[subjectIdx]) - 1;
+                var qNo = numberOrZero(q.num);
+                if (qNo >= startNo && qNo <= endNo) return true;
+            }
+
+            // 3. Fallback: 기존 균등 분할 논리 (모달에서 사용한 것과 동일)
+            var totalItems = (data.itemAnalysis || []).length;
+            if (totalItems > 0 && subjects.length > 0) {
+                var base = Math.floor(totalItems / subjects.length);
+                var remainder = totalItems % subjects.length;
+                var startIdx = 0;
+                for (var i = 0; i < subjectIdx; i++) {
+                    startIdx += base + (i < remainder ? 1 : 0);
+                }
+                var size = base + (subjectIdx < remainder ? 1 : 0);
+                var qIdx = numberOrZero(q.num) - 1;
+                if (qIdx >= startIdx && qIdx < (startIdx + size)) return true;
+            }
+
+            return false;
+        }
+
+        document.getElementById('studentId').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') document.getElementById('userName').focus();
+        });
+        document.getElementById('userName').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') handleLogin();
+        });
+
+        document.addEventListener('DOMContentLoaded', function () {
+            updateTypeUI();
+        });
+
+        window.addEventListener('afterprint', function () {
+            document.body.classList.remove('printing-admit');
+        });
+
+        // ===== 뒤로가기 =====
+        function goBack() {
+            document.body.classList.remove('printing-admit');
+            radarChart = destroyChart(radarChart);
+            subjectAvgBarChart = destroyChart(subjectAvgBarChart);
+            regionalCompareChart = destroyChart(regionalCompareChart);
+            distributionChart = destroyChart(distributionChart);
+            overviewCompareChart = destroyChart(overviewCompareChart);
+            document.getElementById('dashboardSection').style.display = 'none';
+            if (currentUser) {
+                document.getElementById('examSelectSection').style.display = 'flex';
+            } else {
+                document.getElementById('loginSection').style.display = 'flex';
+            }
+            currentData = null;
+            selectedItemSubjectIdx = -1;
+            selectedKillerSubjectIdx = -1;
+        }
+
+        function resetToLogin() {
+            document.body.classList.remove('printing-admit');
+            radarChart = destroyChart(radarChart);
+            subjectAvgBarChart = destroyChart(subjectAvgBarChart);
+            regionalCompareChart = destroyChart(regionalCompareChart);
+            distributionChart = destroyChart(distributionChart);
+            overviewCompareChart = destroyChart(overviewCompareChart);
+            currentData = null;
+            currentUser = null;
+            selectedItemSubjectIdx = -1;
+            selectedKillerSubjectIdx = -1;
+            document.getElementById('dashboardSection').style.display = 'none';
+            document.getElementById('examSelectSection').style.display = 'none';
+            document.getElementById('loginSection').style.display = 'flex';
+            document.getElementById('loginBtn').disabled = false;
+            document.getElementById('loginBtn').innerHTML = '로그인';
+            document.getElementById('loginMessage').className = 'message';
+            document.getElementById('loginMessage').style.display = 'none';
+        }
+
+        function showMessage(el, msg, type) {
+            if (!el) return;
+            el.textContent = msg || '';
+            el.className = 'message ' + (type || '');
+            el.style.display = msg ? 'block' : 'none';
+        }
+
+        function maskStudentId_(id) {
+            var str = String(id || '').trim();
+            if (str.length <= 2) return str;
+            return str.substring(0, 2) + '*'.repeat(str.length - 2);
+        }
+    </script>
+</body>
+
+</html>

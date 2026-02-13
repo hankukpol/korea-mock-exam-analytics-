@@ -1,0 +1,12 @@
+﻿# OS/editor
+.DS_Store
+Thumbs.db
+
+# Local recovery/test temp files
+_iter*.tmp
+_recover_test_*.tmp
+_index_recover_*.tmp
+Index.encoding-broken.backup_*.html
+
+# Logs
+*.log

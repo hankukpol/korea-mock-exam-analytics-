@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <?!= include('Css'); ?>
+</head>
+
+<body>
+    <!-- ===== 관리자 로그인 ===== -->
+    <div id="adminLogin" class="login-container">
+        <div class="login-box">
+            <div class="glass-card">
+                <div class="login-logo">
+                    <span class="icon"></span>
+                </div>
+                <h1 class="login-title">관리자 페이지</h1>
+                <p class="login-subtitle">수험생 데이터 관리 시스템</p>
+
+                <div class="form-group">
+                    <label for="adminPw">관리자 비밀번호</label>
+                    <input type="password" id="adminPw" class="form-input" placeholder="비밀번호를 입력하세요" autocomplete="off">
+                </div>
+
+                <button class="btn btn-primary" onclick="adminLogin()">로그인</button>
+                <div id="adminLoginMsg" class="message"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 대시보드 ===== -->
+    <div id="adminDashboard" class="admin-container" style="display:none;">
+        <div class="admin-header">
+            <h1>수험생 관리</h1>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-secondary" onclick="refreshData()">새로고침</button>
+                <button class="btn btn-secondary" onclick="adminLogout()">로그아웃</button>
+            </div>
+        </div>
+
+        <!-- 통계 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="statTotal">0</div>
+                <div class="stat-label">전체 등록</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="statPolice">0</div>
+                <div class="stat-label">경찰</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="statFire">0</div>
+                <div class="stat-label">소방</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="statPrint">0</div>
+                <div class="stat-label">인쇄 횟수</div>
+            </div>
+        </div>
+
+        <!-- 탭 -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('register', this)">개별 등록</button>
+            <button class="tab-btn" onclick="switchTab('bulk', this)">일괄 등록</button>
+            <button class="tab-btn" onclick="switchTab('list', this)">수험생 목록</button>
+        </div>
+
+        <!-- 탭: 개별 등록 -->
+        <div id="tab-register" class="tab-content active">
+            <div class="glass-card">
+                <h3 class="admin-section-title">수험생 개별 등록</h3>
+                <div class="register-form">
+                    <div>
+                        <label class="admin-label">성명 *</label>
+                        <input type="text" id="regName" class="form-input-sm" placeholder="성명">
+                    </div>
+                    <div>
+                        <label class="admin-label">연락처 *</label>
+                        <input type="tel" id="regPhone" class="form-input-sm" placeholder="01012345678">
+                    </div>
+                    <div>
+                        <label class="admin-label">생년월일</label>
+                        <input type="text" id="regBirth" class="form-input-sm" placeholder="예: 1995.03.15">
+                    </div>
+                    <div>
+                        <label class="admin-label">응시번호 *</label>
+                        <input type="text" id="regExamNum" class="form-input-sm" placeholder="응시번호">
+                    </div>
+                    <div>
+                        <label class="admin-label">시험유형 *</label>
+                        <select id="regExamType" class="form-input-sm">
+                            <option value="">선택</option>
+                            <option value="경찰">경찰</option>
+                            <option value="소방">소방</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="admin-label">응시지역</label>
+                        <input type="text" id="regRegion" class="form-input-sm" placeholder="예: 대구">
+                    </div>
+                    <div>
+                        <label class="admin-label">응시분야</label>
+                        <input type="text" id="regField" class="form-input-sm" placeholder="예: 공채 / 일반경채 / 구급경채">
+                    </div>
+                    <div>
+                        <label class="admin-label">응시계급</label>
+                        <input type="text" id="regRank" class="form-input-sm" placeholder="예: 소방사">
+                    </div>
+                    <div>
+                        <label class="admin-label">시험장소</label>
+                        <input type="text" id="regLocation" class="form-input-sm" placeholder="시험장소">
+                    </div>
+                    <div>
+                        <label class="admin-label">시험과목</label>
+                        <input type="text" id="regSubject" class="form-input-sm" placeholder="예: 소방학, 소방법규, 행정법">
+                    </div>
+                    <div>
+                        <label class="admin-label">비고</label>
+                        <input type="text" id="regNote" class="form-input-sm" placeholder="메모">
+                    </div>
+                </div>
+                <button id="registerBtn" class="btn btn-success" onclick="registerOne()"
+                    style="margin-top:8px;">등록하기</button>
+                <div id="registerMsg" class="message" style="margin-top:12px;"></div>
+            </div>
+        </div>
+
+        <!-- 탭: 일괄 등록 -->
+        <div id="tab-bulk" class="tab-content">
+            <div class="glass-card">
+                <h3 class="admin-section-title">수험생 일괄 등록</h3>
+                <p class="help-text" style="margin-bottom:12px;">
+                    아래 형식으로 한 줄에 한 명씩 입력하세요. 각 항목은 <strong style="color:#6c63ff;">탭(Tab)</strong>으로 구분합니다.
+                </p>
+                <div class="bulk-format-hint">
+                    성명 [Tab] 연락처 [Tab] 생년월일 [Tab] 응시번호 [Tab] 시험유형 [Tab] 응시지역 [Tab] 응시분야 [Tab] 응시계급 [Tab] 시험장소 [Tab] 시험과목
+                    [Tab] 비고
+                </div>
+                <textarea id="bulkData" class="bulk-textarea" rows="8"
+                    placeholder="홍길동&#009;01012345678&#009;1995.03.15&#009;F-001&#009;소방&#009;대구&#009;공채&#009;소방사&#009;대구과학기술고등학교&#009;소방학, 소방법규, 행정법&#009;&#10;김영희&#009;01098765432&#009;1998.07.22&#009;P-001&#009;경찰&#009;서울&#009;일반&#009;순경&#009;서울고사장&#009;형법, 형사소송법&#009;"></textarea>
+                <p class="help-text">* 필수: 성명, 연락처, 응시번호, 시험유형 | 나머지는 선택 (빈칸으로 남겨도 됨)</p>
+                <div style="margin-top:12px; display:flex; gap:8px;">
+                    <button id="bulkBtn" class="btn btn-success" onclick="bulkRegister()">일괄 등록</button>
+                    <button class="btn btn-secondary"
+                        onclick="document.getElementById('bulkData').value=''">비우기</button>
+                </div>
+                <div id="bulkMsg" class="message" style="margin-top:12px;"></div>
+            </div>
+        </div>
+
+        <!-- 탭: 수험생 목록 -->
+        <div id="tab-list" class="tab-content">
+            <div class="glass-card" style="padding:16px;">
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:8px;">
+                    <h3 class="admin-section-title">등록된 수험생 목록</h3>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="text" id="searchInput" class="form-input-sm" placeholder="이름/응시번호 검색"
+                            style="width:200px;" oninput="filterTable()">
+                        <select id="filterType" class="form-input-sm" style="width:100px;" onchange="filterTable()">
+                            <option value="">전체</option>
+                            <option value="경찰">경찰</option>
+                            <option value="소방">소방</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="data-table-wrap">
+                    <table class="data-table" id="studentTable">
+                        <thead>
+                            <tr>
+                                <th>성명</th>
+                                <th>연락처</th>
+                                <th>생년월일</th>
+                                <th>응시번호</th>
+                                <th>유형</th>
+                                <th>응시지역</th>
+                                <th>응시분야</th>
+                                <th>응시계급</th>
+                                <th>시험장소</th>
+                                <th>시험과목</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studentTableBody">
+                            <tr>
+                                <td colspan="11" class="empty-cell">
+                                    데이터를 불러오는 중...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 수정 모달 ===== -->
+    <div id="editModal" class="modal-overlay">
+        <div class="modal">
+            <h3>수험생 정보 수정</h3>
+            <input type="hidden" id="editRowIndex">
+            <div style="display:grid; gap:12px;">
+                <div>
+                    <label class="admin-label">성명</label>
+                    <input type="text" id="editName" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">연락처</label>
+                    <input type="tel" id="editPhone" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">생년월일</label>
+                    <input type="text" id="editBirth" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">응시번호</label>
+                    <input type="text" id="editExamNum" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">시험유형</label>
+                    <select id="editExamType" class="form-input-sm">
+                        <option value="경찰">경찰</option>
+                        <option value="소방">소방</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="admin-label">응시지역</label>
+                    <input type="text" id="editRegion" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">응시분야</label>
+                    <input type="text" id="editField" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">응시계급</label>
+                    <input type="text" id="editRank" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">시험장소</label>
+                    <input type="text" id="editLocation" class="form-input-sm">
+                </div>
+                <div>
+                    <label class="admin-label">시험과목</label>
+                    <input type="text" id="editSubject" class="form-input-sm">
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:20px; justify-content:flex-end;">
+                <button class="btn btn-secondary" onclick="closeModal()">취소</button>
+                <button class="btn btn-success" onclick="saveEdit()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var allStudents = [];
+        var adminToken = '';
+
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function handleAdminFailure(result) {
+            if (result && result.message) {
+                alert(result.message);
+                if (result.message.indexOf('세션') >= 0 || result.message.indexOf('인증') >= 0) {
+                    adminLogout();
+                }
+            } else {
+                alert('요청 처리 중 오류가 발생했습니다.');
+            }
+        }
+
+        // ===== 관리자 로그인 =====
+        function adminLogin() {
+            var pw = document.getElementById('adminPw').value;
+            var msgEl = document.getElementById('adminLoginMsg');
+
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    if (result.success) {
+                        adminToken = result.token || '';
+                        document.getElementById('adminLogin').style.display = 'none';
+                        document.getElementById('adminDashboard').style.display = 'block';
+                        refreshData();
+                    } else {
+                        showMsg(msgEl, '비밀번호가 올바르지 않습니다.', 'error');
+                    }
+                })
+                .withFailureHandler(function () {
+                    showMsg(msgEl, '서버 오류가 발생했습니다.', 'error');
+                })
+                .verifyAdmin(pw);
+        }
+
+        document.getElementById('adminPw').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') adminLogin();
+        });
+
+        function adminLogout() {
+            document.getElementById('adminDashboard').style.display = 'none';
+            document.getElementById('adminLogin').style.display = 'flex';
+            document.getElementById('adminPw').value = '';
+            // The instruction implies a 'loginBtn' might exist in the full HTML,
+            // but it's not in the provided snippet. Adding a check for robustness.
+            var loginBtn = document.getElementById('loginBtn');
+            if (loginBtn) {
+                loginBtn.innerHTML = '로그인';
+            }
+            adminToken = '';
+            allStudents = [];
+        }
+
+        // ===== 탭 전환 =====
+        function switchTab(tabName, el) {
+            var btns = document.querySelectorAll('.tab-btn');
+            var tabs = document.querySelectorAll('.tab-content');
+            for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
+            for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+            document.getElementById('tab-' + tabName).classList.add('active');
+            el.classList.add('active');
+            if (tabName === 'list') loadStudentList();
+        }
+
+        function refreshData() {
+            loadStats();
+            loadStudentList();
+        }
+
+        function loadStats() {
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    if (result.success) {
+                        document.getElementById('statTotal').textContent = result.data.total;
+                        document.getElementById('statPolice').textContent = result.data.police;
+                        document.getElementById('statFire').textContent = result.data.fire;
+                        document.getElementById('statPrint').textContent = result.data.printCount;
+                    } else {
+                        handleAdminFailure(result);
+                    }
+                })
+                .withFailureHandler(function () {
+                    alert('통계 조회 중 서버 오류가 발생했습니다.');
+                })
+                .getDashboardStats(adminToken);
+        }
+
+        // ===== 개별 등록 =====
+        function registerOne() {
+            var btn = document.getElementById('registerBtn');
+            var msgEl = document.getElementById('registerMsg');
+
+            var data = {
+                name: document.getElementById('regName').value,
+                phone: document.getElementById('regPhone').value,
+                birthDate: document.getElementById('regBirth').value,
+                examNumber: document.getElementById('regExamNum').value,
+                examType: document.getElementById('regExamType').value,
+                examRegion: document.getElementById('regRegion').value,
+                examField: document.getElementById('regField').value,
+                examRank: document.getElementById('regRank').value,
+                examLocation: document.getElementById('regLocation').value,
+                examSubject: document.getElementById('regSubject').value,
+                note: document.getElementById('regNote').value
+            };
+
+            if (!data.name || !data.phone || !data.examNumber || !data.examType) {
+                showMsg(msgEl, '필수 항목(성명, 연락처, 응시번호, 시험유형)을 모두 입력해 주세요.', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '등록 중...';
+
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    btn.disabled = false;
+                    btn.textContent = '등록하기';
+                    showMsg(msgEl, result.message, result.success ? 'success' : 'error');
+                    if (result.success) {
+                        clearForm();
+                        loadStats();
+                    }
+                })
+                .withFailureHandler(function () {
+                    btn.disabled = false;
+                    btn.textContent = '등록하기';
+                    showMsg(msgEl, '서버 오류가 발생했습니다.', 'error');
+                })
+                .registerStudent(data, adminToken);
+        }
+
+        function clearForm() {
+            var ids = ['regName', 'regPhone', 'regBirth', 'regExamNum', 'regRegion', 'regField', 'regRank', 'regLocation', 'regSubject', 'regNote'];
+            for (var i = 0; i < ids.length; i++) document.getElementById(ids[i]).value = '';
+            document.getElementById('regExamType').selectedIndex = 0;
+        }
+
+        // ===== 일괄 등록 =====
+        function bulkRegister() {
+            var btn = document.getElementById('bulkBtn');
+            var msgEl = document.getElementById('bulkMsg');
+            var raw = document.getElementById('bulkData').value.trim();
+
+            if (!raw) {
+                showMsg(msgEl, '데이터를 입력해 주세요.', 'error');
+                return;
+            }
+
+            var lines = raw.split('\n');
+            var dataArray = [];
+
+            for (var i = 0; i < lines.length; i++) {
+                var cols = lines[i].split('\t');
+                if (cols.length < 4) continue;
+                dataArray.push({
+                    name: cols[0] || '',
+                    phone: cols[1] || '',
+                    birthDate: cols[2] || '',
+                    examNumber: cols[3] || '',
+                    examType: cols[4] || '',
+                    examRegion: cols[5] || '',
+                    examField: cols[6] || '',
+                    examRank: cols[7] || '',
+                    examLocation: cols[8] || '',
+                    examSubject: cols[9] || '',
+                    note: cols[10] || ''
+                });
+            }
+
+            if (dataArray.length === 0) {
+                showMsg(msgEl, '유효한 데이터가 없습니다. 탭(Tab)으로 구분되었는지 확인해 주세요.', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '등록 중...';
+
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    btn.disabled = false;
+                    btn.textContent = '일괄 등록';
+                    showMsg(msgEl, result.message, result.success ? 'success' : 'error');
+                    if (result.success) {
+                        document.getElementById('bulkData').value = '';
+                        loadStats();
+                    }
+                })
+                .withFailureHandler(function () {
+                    btn.disabled = false;
+                    btn.textContent = '일괄 등록';
+                    showMsg(msgEl, '서버 오류가 발생했습니다.', 'error');
+                })
+                .bulkRegisterStudents(dataArray, adminToken);
+        }
+
+        // ===== 수험생 목록 =====
+        function loadStudentList() {
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    if (result.success) {
+                        allStudents = result.data;
+                        renderTable(allStudents);
+                    } else {
+                        handleAdminFailure(result);
+                    }
+                })
+                .withFailureHandler(function () {
+                    alert('목록 조회 중 서버 오류가 발생했습니다.');
+                })
+                .getStudentList(adminToken);
+        }
+
+        function renderTable(students) {
+            var tbody = document.getElementById('studentTableBody');
+            if (students.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="11" class="empty-cell">등록된 수험생이 없습니다</td></tr>';
+                return;
+            }
+
+            var html = '';
+            for (var i = 0; i < students.length; i++) {
+                var s = students[i];
+                var tc = s.examType === '경찰' ? 'police' : 'fire';
+                html += '<tr>';
+                html += '<td>' + escapeHtml(s.name) + '</td>';
+                html += '<td>' + escapeHtml(s.phone) + '</td>';
+                html += '<td>' + escapeHtml(s.birthDate || '-') + '</td>';
+                html += '<td>' + escapeHtml(s.examNumber) + '</td>';
+                html += '<td><span class="type-badge ' + tc + '" style="font-size:11px; padding:2px 8px;">' + escapeHtml(s.examType) + '</span></td>';
+                html += '<td>' + escapeHtml(s.examRegion || '-') + '</td>';
+                html += '<td>' + escapeHtml(s.examField || '-') + '</td>';
+                html += '<td>' + escapeHtml(s.examRank || '-') + '</td>';
+                html += '<td>' + escapeHtml(s.examLocation || '-') + '</td>';
+                html += '<td>' + escapeHtml(s.examSubject || '-') + '</td>';
+                html += '<td style="white-space:nowrap;">';
+                html += '<button class="btn btn-secondary" style="padding:4px 10px; font-size:12px; margin-right:4px;" onclick="openEdit(' + i + ')">수정</button>';
+                html += '<button class="btn btn-danger" style="padding:4px 10px; font-size:12px;" onclick="deleteByIndex(' + i + ')">삭제</button>';
+                html += '</td>';
+                html += '</tr>';
+            }
+            tbody.innerHTML = html;
+        }
+
+        function deleteByIndex(index) {
+            var s = allStudents[index];
+            if (!s) return;
+            deleteRow(s.rowIndex, s.sheetName);
+        }
+
+        function filterTable() {
+            var searchText = document.getElementById('searchInput').value.trim().toLowerCase();
+            var filterType = document.getElementById('filterType').value;
+            var filtered = allStudents.filter(function (s) {
+                var matchText = !searchText || s.name.toLowerCase().indexOf(searchText) >= 0 || String(s.examNumber).toLowerCase().indexOf(searchText) >= 0;
+                var matchType = !filterType || s.examType === filterType;
+                return matchText && matchType;
+            });
+            renderTable(filtered);
+        }
+
+        // ===== 수정 모달 =====
+        function openEdit(index) {
+            var s = allStudents[index];
+            document.getElementById('editRowIndex').value = s.rowIndex;
+            document.getElementById('editName').value = s.name;
+            document.getElementById('editPhone').value = s.phone;
+            document.getElementById('editBirth').value = s.birthDate || '';
+            document.getElementById('editExamNum').value = s.examNumber;
+            document.getElementById('editExamType').value = s.examType;
+            document.getElementById('editRegion').value = s.examRegion || '';
+            document.getElementById('editField').value = s.examField || '';
+            document.getElementById('editRank').value = s.examRank || '';
+            document.getElementById('editLocation').value = s.examLocation || '';
+            document.getElementById('editSubject').value = s.examSubject || '';
+
+            window._currentEditSheet = s.sheetName;
+
+            document.getElementById('editModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('editModal').classList.remove('active');
+        }
+
+        function saveEdit() {
+            var rowIndex = parseInt(document.getElementById('editRowIndex').value);
+            var sheetName = window._currentEditSheet;
+            var data = {
+                name: document.getElementById('editName').value,
+                phone: document.getElementById('editPhone').value,
+                birthDate: document.getElementById('editBirth').value,
+                examNumber: document.getElementById('editExamNum').value,
+                examType: document.getElementById('editExamType').value,
+                examRegion: document.getElementById('editRegion').value,
+                examField: document.getElementById('editField').value,
+                examRank: document.getElementById('editRank').value,
+                examLocation: document.getElementById('editLocation').value,
+                examSubject: document.getElementById('editSubject').value
+            };
+
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    if (result.success) {
+                        closeModal();
+                        loadStudentList();
+                        loadStats();
+                    } else {
+                        handleAdminFailure(result);
+                    }
+                })
+                .withFailureHandler(function () { alert('서버 오류가 발생했습니다.'); })
+                .updateStudent(rowIndex, data, adminToken, sheetName);
+        }
+
+        function deleteRow(rowIndex, sheetName) {
+            if (!confirm('정말 삭제하시겠습니까?')) return;
+            google.script.run
+                .withSuccessHandler(function (result) {
+                    if (result.success) {
+                        loadStudentList();
+                        loadStats();
+                    } else {
+                        handleAdminFailure(result);
+                    }
+                })
+                .withFailureHandler(function () { alert('서버 오류가 발생했습니다.'); })
+                .deleteStudent(rowIndex, adminToken, sheetName);
+        }
+
+        function showMsg(el, msg, type) {
+            el.textContent = msg;
+            el.className = 'message ' + type;
+        }
+    </script>
+</body>
+
+</html>
