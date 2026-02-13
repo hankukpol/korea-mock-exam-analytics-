@@ -7,16 +7,21 @@ var CONFIG = {
   SHEET_STUDENTS_FIRE: 'Students_Fire',
   SHEET_EXAM: 'Exams',
   SHEET_LOG: '로그인기록',
-  SHEET_SCORE: 'Scores',
-  SHEET_QUESTIONS: 'ItemAnalysis',
+  SHEET_SCORE_POLICE: 'Scores_Police',
+  SHEET_SCORE_FIRE: 'Scores_Fire',
+  SHEET_SCORE_LEGACY: 'Scores',
+  SHEET_QUESTIONS_POLICE: 'ItemAnalysis_Police',
+  SHEET_QUESTIONS_FIRE: 'ItemAnalysis_Fire',
+  SHEET_QUESTIONS_LEGACY: 'ItemAnalysis',
   SHEET_RESPONSE_CANDIDATES: ['StudentResponses', 'Responses', '문항응답', '답안데이터', 'StudentAnswer'],
   ADMIN_PASSWORD_DEFAULT: 'admin1234',
   ADMIN_SESSION_TTL_SECONDS: 1800
 };
+var SPLIT_MIGRATION_PROPERTY_KEY = 'SPLIT_SCORE_ITEM_MIGRATION_V1';
 
 var STUDENT_HEADERS = [
   '수험번호', '이름', '직렬', '지원지역', '비밀번호',
-  '연락처', '생년월일', '응시분야', '응시계급', '시험장소', '시험과목', '비고'
+  '연락처', '생년월일', '응시분야', '응시계급', '고사실', '시험과목', '비고'
 ];
 var EXAM_HEADERS = ['시험ID', '시험명', '시행일', '과목1', '과목2', '과목3'];
 var SCORE_HEADERS = ['시험ID', '수험번호', '과목1점수', '과목2점수', '과목3점수', '총점', '평균'];
@@ -74,7 +79,7 @@ var ITEM_COL = {
 function doGet(e) {
   var page = e && e.parameter && e.parameter.page ? e.parameter.page : 'index';
   var templateName = page === 'admin' ? 'Admin' : 'Index';
-  var title = page === 'admin' ? '현장 모의고사 - 관리자' : '현장 모의고사 - 성적 분석';
+  var title = page === 'admin' ? '현장모의고사 - 관리자' : '현장모의고사 성적 분석 시스템';
 
   return HtmlService.createTemplateFromFile(templateName)
     .evaluate()
@@ -124,13 +129,13 @@ function initSheet(sheet, sheetName) {
     return;
   }
 
-  if (sheetName === CONFIG.SHEET_SCORE) {
+  if (isScoreSheetName_(sheetName)) {
     sheet.getRange(1, 1, 1, SCORE_HEADERS.length).setValues([SCORE_HEADERS]);
     styleHeader_(sheet, SCORE_HEADERS.length, '#fbbc04');
     return;
   }
 
-  if (sheetName === CONFIG.SHEET_QUESTIONS) {
+  if (isQuestionSheetName_(sheetName)) {
     sheet.getRange(1, 1, 1, QUESTION_HEADERS.length).setValues([QUESTION_HEADERS]);
     styleHeader_(sheet, QUESTION_HEADERS.length, '#673ab7');
     return;
@@ -167,6 +172,332 @@ function getStudentSheetName_(type) {
   if (type === '경찰') return CONFIG.SHEET_STUDENTS_POLICE;
   if (type === '소방') return CONFIG.SHEET_STUDENTS_FIRE;
   return null;
+}
+
+function getScoreSheetNameByType_(type) {
+  if (type === '경찰') return CONFIG.SHEET_SCORE_POLICE;
+  if (type === '소방') return CONFIG.SHEET_SCORE_FIRE;
+  return '';
+}
+
+function getQuestionSheetNameByType_(type) {
+  if (type === '경찰') return CONFIG.SHEET_QUESTIONS_POLICE;
+  if (type === '소방') return CONFIG.SHEET_QUESTIONS_FIRE;
+  return '';
+}
+
+function isScoreSheetName_(sheetName) {
+  return sheetName === CONFIG.SHEET_SCORE_POLICE ||
+    sheetName === CONFIG.SHEET_SCORE_FIRE ||
+    sheetName === CONFIG.SHEET_SCORE_LEGACY;
+}
+
+function isQuestionSheetName_(sheetName) {
+  return sheetName === CONFIG.SHEET_QUESTIONS_POLICE ||
+    sheetName === CONFIG.SHEET_QUESTIONS_FIRE ||
+    sheetName === CONFIG.SHEET_QUESTIONS_LEGACY;
+}
+
+function trimRightEmptyRow_(row) {
+  var end = row.length;
+  while (end > 0 && String(row[end - 1] || '') === '') end--;
+  return row.slice(0, end);
+}
+
+function appendRowsWithPadding_(sheet, rows) {
+  if (!rows || rows.length === 0) return 0;
+  var maxLen = 0;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].length > maxLen) maxLen = rows[i].length;
+  }
+  if (maxLen <= 0) return 0;
+
+  if (sheet.getLastColumn() < maxLen) {
+    sheet.insertColumnsAfter(sheet.getLastColumn(), maxLen - sheet.getLastColumn());
+  }
+
+  var normalized = rows.map(function(row) {
+    var out = row.slice(0, maxLen);
+    while (out.length < maxLen) out.push('');
+    return out;
+  });
+
+  sheet.getRange(sheet.getLastRow() + 1, 1, normalized.length, maxLen).setValues(normalized);
+  return normalized.length;
+}
+
+function buildExamTypeMapForMigration_() {
+  var map = {};
+  var examSheet = getSheet(CONFIG.SHEET_EXAM);
+  var rows = examSheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    var examId = String(rows[i][EXAM_COL.ID] || '').trim();
+    if (!examId) continue;
+    var examType = inferExamType_(examId, rows[i][EXAM_COL.S1]);
+    if (examType) map[examId] = examType;
+  }
+  return map;
+}
+
+function buildStudentTypeMapForMigration_() {
+  var map = {};
+  var policeRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_POLICE));
+  var fireRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_FIRE));
+  var all = policeRecords.concat(fireRecords);
+  for (var i = 0; i < all.length; i++) {
+    var sid = String(all[i].studentId || '').trim();
+    var t = String(all[i].type || '').trim();
+    if (sid && t && !map[sid]) map[sid] = t;
+  }
+  return map;
+}
+
+function resolveTypeForMigration_(examId, studentId, examTypeMap, studentTypeMap) {
+  var eId = String(examId || '').trim();
+  if (!eId) return '';
+  var byExamMap = String((examTypeMap && examTypeMap[eId]) || '').trim();
+  if (byExamMap === '경찰' || byExamMap === '소방') return byExamMap;
+
+  var byExamId = inferExamType_(eId, '');
+  if (byExamId === '경찰' || byExamId === '소방') return byExamId;
+
+  var sid = String(studentId || '').trim();
+  var byStudent = String((studentTypeMap && studentTypeMap[sid]) || '').trim();
+  if (byStudent === '경찰' || byStudent === '소방') return byStudent;
+
+  return '';
+}
+
+function migrateLegacyScoresToSplit_(legacySheet, policeSheet, fireSheet, examTypeMap, studentTypeMap) {
+  if (!legacySheet || legacySheet.getLastRow() < 2) {
+    return { police: 0, fire: 0, unknown: 0 };
+  }
+
+  var policeKeys = {};
+  var fireKeys = {};
+
+  var pRows = policeSheet.getDataRange().getValues();
+  for (var p = 1; p < pRows.length; p++) {
+    var pExamId = String(pRows[p][SCORE_COL.EXAM_ID] || '').trim();
+    var pSid = String(pRows[p][SCORE_COL.STUDENT_ID] || '').trim();
+    if (pExamId && pSid) policeKeys[pExamId + '::' + pSid] = true;
+  }
+  var fRows = fireSheet.getDataRange().getValues();
+  for (var f = 1; f < fRows.length; f++) {
+    var fExamId = String(fRows[f][SCORE_COL.EXAM_ID] || '').trim();
+    var fSid = String(fRows[f][SCORE_COL.STUDENT_ID] || '').trim();
+    if (fExamId && fSid) fireKeys[fExamId + '::' + fSid] = true;
+  }
+
+  var policeAppend = [];
+  var fireAppend = [];
+  var unknownCount = 0;
+  var legacyRows = legacySheet.getDataRange().getValues();
+  for (var i = 1; i < legacyRows.length; i++) {
+    var row = trimRightEmptyRow_(legacyRows[i]);
+    var examId = String(row[SCORE_COL.EXAM_ID] || '').trim();
+    var sid = String(row[SCORE_COL.STUDENT_ID] || '').trim();
+    if (!examId || !sid) continue;
+
+    var key = examId + '::' + sid;
+    var resolvedType = resolveTypeForMigration_(examId, sid, examTypeMap, studentTypeMap);
+    if (resolvedType === '경찰') {
+      if (policeKeys[key]) continue;
+      policeKeys[key] = true;
+      policeAppend.push(row);
+      continue;
+    }
+    if (resolvedType === '소방') {
+      if (fireKeys[key]) continue;
+      fireKeys[key] = true;
+      fireAppend.push(row);
+      continue;
+    }
+    unknownCount++;
+  }
+
+  var addedPolice = appendRowsWithPadding_(policeSheet, policeAppend);
+  var addedFire = appendRowsWithPadding_(fireSheet, fireAppend);
+  return { police: addedPolice, fire: addedFire, unknown: unknownCount };
+}
+
+function migrateLegacyItemsToSplit_(legacySheet, policeSheet, fireSheet, examTypeMap) {
+  if (!legacySheet || legacySheet.getLastRow() < 2) {
+    return { police: 0, fire: 0, unknown: 0 };
+  }
+
+  var policeKeys = {};
+  var fireKeys = {};
+
+  var pRows = policeSheet.getDataRange().getValues();
+  for (var p = 1; p < pRows.length; p++) {
+    var pExamId = String(pRows[p][ITEM_COL.EXAM_ID] || '').trim();
+    var pNum = Number(pRows[p][ITEM_COL.NUM]) || 0;
+    if (pExamId && pNum) policeKeys[pExamId + '::' + pNum] = true;
+  }
+  var fRows = fireSheet.getDataRange().getValues();
+  for (var f = 1; f < fRows.length; f++) {
+    var fExamId = String(fRows[f][ITEM_COL.EXAM_ID] || '').trim();
+    var fNum = Number(fRows[f][ITEM_COL.NUM]) || 0;
+    if (fExamId && fNum) fireKeys[fExamId + '::' + fNum] = true;
+  }
+
+  var policeAppend = [];
+  var fireAppend = [];
+  var unknownCount = 0;
+  var legacyRows = legacySheet.getDataRange().getValues();
+  for (var i = 1; i < legacyRows.length; i++) {
+    var row = trimRightEmptyRow_(legacyRows[i]);
+    var examId = String(row[ITEM_COL.EXAM_ID] || '').trim();
+    var qNum = Number(row[ITEM_COL.NUM]) || 0;
+    if (!examId || !qNum) continue;
+
+    var resolvedType = resolveTypeForMigration_(examId, '', examTypeMap, null);
+    var key = examId + '::' + qNum;
+    if (resolvedType === '경찰') {
+      if (policeKeys[key]) continue;
+      policeKeys[key] = true;
+      policeAppend.push(row);
+      continue;
+    }
+    if (resolvedType === '소방') {
+      if (fireKeys[key]) continue;
+      fireKeys[key] = true;
+      fireAppend.push(row);
+      continue;
+    }
+    unknownCount++;
+  }
+
+  var addedPolice = appendRowsWithPadding_(policeSheet, policeAppend);
+  var addedFire = appendRowsWithPadding_(fireSheet, fireAppend);
+  return { police: addedPolice, fire: addedFire, unknown: unknownCount };
+}
+
+function ensureSeparatedExamDataReady_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty(SPLIT_MIGRATION_PROPERTY_KEY) === '1') return;
+
+  var lock = LockService.getScriptLock();
+  var locked = false;
+  try {
+    lock.waitLock(10000);
+    locked = true;
+  } catch (lockErr) {
+    return;
+  }
+
+  try {
+    if (props.getProperty(SPLIT_MIGRATION_PROPERTY_KEY) === '1') return;
+
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var policeScoreSheet = getSheet(CONFIG.SHEET_SCORE_POLICE);
+    var fireScoreSheet = getSheet(CONFIG.SHEET_SCORE_FIRE);
+    var policeItemSheet = getSheet(CONFIG.SHEET_QUESTIONS_POLICE);
+    var fireItemSheet = getSheet(CONFIG.SHEET_QUESTIONS_FIRE);
+
+    var examTypeMap = buildExamTypeMapForMigration_();
+    var studentTypeMap = buildStudentTypeMapForMigration_();
+
+    var legacyScoreSheet = ss.getSheetByName(CONFIG.SHEET_SCORE_LEGACY);
+    var legacyItemSheet = ss.getSheetByName(CONFIG.SHEET_QUESTIONS_LEGACY);
+
+    migrateLegacyScoresToSplit_(legacyScoreSheet, policeScoreSheet, fireScoreSheet, examTypeMap, studentTypeMap);
+    migrateLegacyItemsToSplit_(legacyItemSheet, policeItemSheet, fireItemSheet, examTypeMap);
+
+    props.setProperty(SPLIT_MIGRATION_PROPERTY_KEY, '1');
+  } finally {
+    if (locked) lock.releaseLock();
+  }
+}
+
+function rerunSeparatedExamDataMigration(adminToken) {
+  requireAdminToken_(adminToken);
+  PropertiesService.getScriptProperties().deleteProperty(SPLIT_MIGRATION_PROPERTY_KEY);
+  ensureSeparatedExamDataReady_();
+  return { success: true, message: '분리 시트 자동 설정/이관을 다시 실행했습니다.' };
+}
+
+function getScoreSheetsForType_(type) {
+  ensureSeparatedExamDataReady_();
+  var names = [];
+  var preferred = getScoreSheetNameByType_(String(type || '').trim());
+  if (preferred) {
+    names.push(preferred);
+  } else {
+    names.push(CONFIG.SHEET_SCORE_POLICE, CONFIG.SHEET_SCORE_FIRE);
+  }
+
+  var sheets = names.map(function(name) { return getSheet(name); });
+  var legacy = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SHEET_SCORE_LEGACY);
+  if (legacy) sheets.push(legacy);
+  return sheets;
+}
+
+function getQuestionSheetsForType_(type) {
+  ensureSeparatedExamDataReady_();
+  var names = [];
+  var preferred = getQuestionSheetNameByType_(String(type || '').trim());
+  if (preferred) {
+    names.push(preferred);
+  } else {
+    names.push(CONFIG.SHEET_QUESTIONS_POLICE, CONFIG.SHEET_QUESTIONS_FIRE);
+  }
+
+  var sheets = names.map(function(name) { return getSheet(name); });
+  var legacy = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SHEET_QUESTIONS_LEGACY);
+  if (legacy) sheets.push(legacy);
+  return sheets;
+}
+
+function collectScoreRowsByExam_(examId, examType) {
+  var scoreRows = [SCORE_HEADERS.slice()];
+  var seenStudentMap = {};
+  var targetExamId = String(examId || '').trim();
+  var scoreSheets = getScoreSheetsForType_(examType);
+
+  for (var s = 0; s < scoreSheets.length; s++) {
+    var data = scoreSheets[s].getDataRange().getValues();
+    for (var r = 1; r < data.length; r++) {
+      var rowExamId = String(data[r][SCORE_COL.EXAM_ID] || '').trim();
+      if (rowExamId !== targetExamId) continue;
+
+      var sid = String(data[r][SCORE_COL.STUDENT_ID] || '').trim();
+      if (!sid || seenStudentMap[sid]) continue;
+      seenStudentMap[sid] = true;
+      scoreRows.push(data[r]);
+    }
+  }
+  return scoreRows;
+}
+
+function collectItemRowsByExam_(examId, examType) {
+  var itemRows = [QUESTION_HEADERS.slice()];
+  var seenQuestionMap = {};
+  var targetExamId = String(examId || '').trim();
+  var questionSheets = getQuestionSheetsForType_(examType);
+
+  for (var s = 0; s < questionSheets.length; s++) {
+    var data = questionSheets[s].getDataRange().getValues();
+    for (var r = 1; r < data.length; r++) {
+      var rowExamId = String(data[r][ITEM_COL.EXAM_ID] || '').trim();
+      if (rowExamId !== targetExamId) continue;
+
+      var qNum = Number(data[r][ITEM_COL.NUM]) || 0;
+      if (!qNum || seenQuestionMap[qNum]) continue;
+      seenQuestionMap[qNum] = true;
+      itemRows.push(data[r]);
+    }
+  }
+
+  if (itemRows.length > 2) {
+    var sortedBody = itemRows.slice(1).sort(function(a, b) {
+      return (Number(a[ITEM_COL.NUM]) || 0) - (Number(b[ITEM_COL.NUM]) || 0);
+    });
+    itemRows = [itemRows[0]].concat(sortedBody);
+  }
+
+  return itemRows;
 }
 
 function isStudentSheetName_(sheetName) {
@@ -554,10 +885,18 @@ function loginUser(studentId, name, password, examType) {
         return {
           success: true,
           data: {
+            id: s.studentId,
             studentId: s.studentId,
             name: s.name,
             examType: s.type,
-            region: s.region
+            type: s.type,
+            region: s.region,
+            phone: s.phone || '',
+            birthDate: s.birthDate || '',
+            examField: s.examField || '',
+            examRank: s.examRank || '',
+            examLocation: s.examLocation || '',
+            examSubject: s.examSubject || ''
           }
         };
       }
@@ -608,28 +947,34 @@ function initializeSampleData(adminToken) {
   examSheet.appendRow(['P2512', '25년 12월 경찰 모의고사', '2025-12-27', '형사법', '경찰학', '헌법']);
   examSheet.appendRow(['F2512', '25년 12월 소방 모의고사', '2025-12-27', '소방학', '소방법규', '행정법']);
 
-  var scoreSheet = getSheet(CONFIG.SHEET_SCORE);
-  scoreSheet.clearContents();
-  initSheet(scoreSheet, CONFIG.SHEET_SCORE);
-  scoreSheet.appendRow(['P2512', '21889', 77.5, 92.5, 27.5, 197.5, 65.8, 'O', 'X', 'O', 'X', 'O']);
-  scoreSheet.appendRow(['P2512', '21890', 85.0, 80.0, 40.0, 205.0, 68.3, 'O', 'O', 'X', 'O', 'X']);
-  scoreSheet.appendRow(['F2512', '21891', 90.0, 85.0, 80.0, 255.0, 85.0, 'O', 'X', 'O', 'O', 'X']);
-  scoreSheet.appendRow(['F2512', '21892', 70.0, 75.0, 65.0, 210.0, 70.0, 'X', 'X', 'O', 'X', 'O']);
-  scoreSheet.appendRow(['P2512', '21893', 95.0, 90.0, 45.0, 230.0, 76.7, 'O', 'O', 'O', 'X', 'O']);
+  var policeScoreSheet = getSheet(CONFIG.SHEET_SCORE_POLICE);
+  var fireScoreSheet = getSheet(CONFIG.SHEET_SCORE_FIRE);
+  policeScoreSheet.clearContents();
+  fireScoreSheet.clearContents();
+  initSheet(policeScoreSheet, CONFIG.SHEET_SCORE_POLICE);
+  initSheet(fireScoreSheet, CONFIG.SHEET_SCORE_FIRE);
+  policeScoreSheet.appendRow(['P2512', '21889', 77.5, 92.5, 27.5, 197.5, 65.8, 'O', 'X', 'O', 'X', 'O']);
+  policeScoreSheet.appendRow(['P2512', '21890', 85.0, 80.0, 40.0, 205.0, 68.3, 'O', 'O', 'X', 'O', 'X']);
+  policeScoreSheet.appendRow(['P2512', '21893', 95.0, 90.0, 45.0, 230.0, 76.7, 'O', 'O', 'O', 'X', 'O']);
+  fireScoreSheet.appendRow(['F2512', '21891', 90.0, 85.0, 80.0, 255.0, 85.0, 'O', 'X', 'O', 'O', 'X']);
+  fireScoreSheet.appendRow(['F2512', '21892', 70.0, 75.0, 65.0, 210.0, 70.0, 'X', 'X', 'O', 'X', 'O']);
 
-  var qSheet = getSheet(CONFIG.SHEET_QUESTIONS);
-  qSheet.clearContents();
-  initSheet(qSheet, CONFIG.SHEET_QUESTIONS);
-  qSheet.appendRow(['P2512', 1, '3', 2.5, 75.5, '상', '수사']);
-  qSheet.appendRow(['P2512', 2, '2', 2.5, 62.1, '중', '증거']);
-  qSheet.appendRow(['P2512', 3, '1', 2.5, 48.0, '상', '기초이론']);
-  qSheet.appendRow(['P2512', 4, '4', 2.5, 35.4, '상', '판례']);
-  qSheet.appendRow(['P2512', 5, '2', 2.5, 41.8, '중', '절차']);
-  qSheet.appendRow(['F2512', 1, '4', 3, 65.2, '하', '연소이론']);
-  qSheet.appendRow(['F2512', 2, '1', 3, 45.8, '상', '소화약제']);
-  qSheet.appendRow(['F2512', 3, '2', 3, 39.0, '상', '위험물']);
-  qSheet.appendRow(['F2512', 4, '3', 3, 58.3, '중', '법규']);
-  qSheet.appendRow(['F2512', 5, '4', 3, 31.6, '상', '행정']);
+  var policeQSheet = getSheet(CONFIG.SHEET_QUESTIONS_POLICE);
+  var fireQSheet = getSheet(CONFIG.SHEET_QUESTIONS_FIRE);
+  policeQSheet.clearContents();
+  fireQSheet.clearContents();
+  initSheet(policeQSheet, CONFIG.SHEET_QUESTIONS_POLICE);
+  initSheet(fireQSheet, CONFIG.SHEET_QUESTIONS_FIRE);
+  policeQSheet.appendRow(['P2512', 1, '3', 2.5, 75.5, '상', '수사']);
+  policeQSheet.appendRow(['P2512', 2, '2', 2.5, 62.1, '중', '증거']);
+  policeQSheet.appendRow(['P2512', 3, '1', 2.5, 48.0, '상', '기초이론']);
+  policeQSheet.appendRow(['P2512', 4, '4', 2.5, 35.4, '상', '판례']);
+  policeQSheet.appendRow(['P2512', 5, '2', 2.5, 41.8, '중', '절차']);
+  fireQSheet.appendRow(['F2512', 1, '4', 3, 65.2, '하', '연소이론']);
+  fireQSheet.appendRow(['F2512', 2, '1', 3, 45.8, '상', '소화약제']);
+  fireQSheet.appendRow(['F2512', 3, '2', 3, 39.0, '상', '위험물']);
+  fireQSheet.appendRow(['F2512', 4, '3', 3, 58.3, '중', '법규']);
+  fireQSheet.appendRow(['F2512', 5, '4', 3, 31.6, '상', '행정']);
 
   return '더미 데이터 초기화 완료! 이제 앱을 테스트할 수 있습니다.';
 }
@@ -904,6 +1249,99 @@ function getExamList(studentType) {
   }
 }
 
+function getMyExamAccess(studentId, studentType) {
+  try {
+    var sid = String(studentId || '').trim();
+    var sType = String(studentType || '').trim();
+    if (!sid) {
+      return { success: false, message: '수험번호가 필요합니다.' };
+    }
+
+    var examSheet = getSheet(CONFIG.SHEET_EXAM);
+    var examRows = examSheet.getDataRange().getValues();
+    var list = [];
+    var examMap = {};
+    var scoreExamMap = {};
+
+    for (var i = 1; i < examRows.length; i++) {
+      var row = examRows[i];
+      var examId = String(row[EXAM_COL.ID] || '').trim();
+      if (!examId) continue;
+
+      var examType = inferExamType_(examId, row[EXAM_COL.S1]);
+      if (sType && examType && sType !== examType) continue;
+
+      var subjects = [
+        String(row[EXAM_COL.S1] || '').trim(),
+        String(row[EXAM_COL.S2] || '').trim(),
+        String(row[EXAM_COL.S3] || '').trim()
+      ].filter(function(v) { return !!v; });
+
+      var examInfo = {
+        id: examId,
+        name: String(row[EXAM_COL.NAME] || examId),
+        date: toClientDateValue_(row[EXAM_COL.DATE]),
+        examType: examType,
+        subjects: subjects,
+        hasScore: false,
+        canPrint: true,
+        canAnalyze: false
+      };
+      list.push(examInfo);
+      examMap[examId] = examInfo;
+    }
+
+    var scoreSheets = getScoreSheetsForType_(sType);
+    for (var ssIdx = 0; ssIdx < scoreSheets.length; ssIdx++) {
+      var scoreSheet = scoreSheets[ssIdx];
+      var scoreLastRow = scoreSheet.getLastRow();
+      if (scoreLastRow < 2) continue;
+      var scoreRows = scoreSheet.getRange(2, 1, scoreLastRow - 1, 2).getValues();
+      for (var j = 0; j < scoreRows.length; j++) {
+        var rowStudentId = String(scoreRows[j][1] || '').trim();
+        if (rowStudentId !== sid) continue;
+        var scoreExamId = String(scoreRows[j][0] || '').trim();
+        if (!scoreExamId || scoreExamMap[scoreExamId]) continue;
+        scoreExamMap[scoreExamId] = true;
+      }
+    }
+
+    Object.keys(scoreExamMap).forEach(function(examId) {
+      if (examMap[examId]) {
+        examMap[examId].hasScore = true;
+        examMap[examId].canAnalyze = true;
+        return;
+      }
+
+      var fallbackType = inferExamType_(examId, '');
+      if (sType && fallbackType && sType !== fallbackType) return;
+
+      list.push({
+        id: examId,
+        name: examId + ' (마스터 정보 없음)',
+        date: '',
+        examType: fallbackType,
+        subjects: [],
+        hasScore: true,
+        canPrint: true,
+        canAnalyze: true
+      });
+    });
+
+    list.sort(function(a, b) {
+      var ad = a.date ? Date.parse(a.date) : 0;
+      var bd = b.date ? Date.parse(b.date) : 0;
+      ad = isNaN(ad) ? 0 : ad;
+      bd = isNaN(bd) ? 0 : bd;
+      return bd - ad;
+    });
+
+    return { success: true, data: list };
+  } catch (e) {
+    return { success: false, message: '시험 접근 정보 조회 중 오류 발생: ' + e.message };
+  }
+}
+
 function getStudentExamList(studentId, studentType) {
   try {
     var sid = String(studentId || '').trim();
@@ -912,20 +1350,21 @@ function getStudentExamList(studentId, studentType) {
       return { success: false, message: '수험번호가 필요합니다.' };
     }
 
-    var scoreSheet = getSheet(CONFIG.SHEET_SCORE);
-    var scoreLastRow = scoreSheet.getLastRow();
-    if (scoreLastRow < 2) {
-      return { success: true, data: [] };
-    }
-
-    // 성능 최적화: 시험ID/수험번호 2개 컬럼만 조회
-    var scoreRows = scoreSheet.getRange(2, 1, scoreLastRow - 1, 2).getValues();
     var myExamMap = {};
-    for (var i = 0; i < scoreRows.length; i++) {
-      var rowStudentId = String(scoreRows[i][1] || '').trim();
-      if (rowStudentId !== sid) continue;
-      var examId = String(scoreRows[i][0] || '').trim();
-      if (examId) myExamMap[examId] = true;
+    var scoreSheets = getScoreSheetsForType_(sType);
+    for (var ssIdx = 0; ssIdx < scoreSheets.length; ssIdx++) {
+      var scoreSheet = scoreSheets[ssIdx];
+      var scoreLastRow = scoreSheet.getLastRow();
+      if (scoreLastRow < 2) continue;
+
+      // 성능 최적화: 시험ID/수험번호 2개 컬럼만 조회
+      var scoreRows = scoreSheet.getRange(2, 1, scoreLastRow - 1, 2).getValues();
+      for (var i = 0; i < scoreRows.length; i++) {
+        var rowStudentId = String(scoreRows[i][1] || '').trim();
+        if (rowStudentId !== sid) continue;
+        var examId = String(scoreRows[i][0] || '').trim();
+        if (examId) myExamMap[examId] = true;
+      }
     }
 
     var myExamIds = Object.keys(myExamMap);
@@ -960,7 +1399,7 @@ function getStudentExamList(studentId, studentType) {
       foundMap[eId] = true;
     }
 
-    // Scores에는 있는데 Exams 마스터가 비어있는 경우를 대비한 폴백
+    // 성적 시트에는 있는데 Exams 마스터가 비어있는 경우를 대비한 폴백
     for (var k = 0; k < myExamIds.length; k++) {
       var missingId = myExamIds[k];
       if (foundMap[missingId]) continue;
@@ -999,8 +1438,6 @@ function getScoreAnalysis(examId, studentId) {
     }
 
     var examSheet = getSheet(CONFIG.SHEET_EXAM);
-    var scoreSheet = getSheet(CONFIG.SHEET_SCORE);
-    var qSheet = getSheet(CONFIG.SHEET_QUESTIONS);
 
     var policeRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_POLICE));
     var fireRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_FIRE));
@@ -1036,12 +1473,13 @@ function getScoreAnalysis(examId, studentId) {
     if (student.type && exam.type && student.type !== exam.type) {
       return { success: false, message: '선택한 시험은 해당 직렬의 시험이 아닙니다.' };
     }
+    var analysisType = exam.type || student.type || '';
     var examStructure = getExamStructure_(student, exam);
     exam.track = examStructure.track;
     exam.subjects = examStructure.subjects;
     exam.subjectItemCounts = examStructure.itemCounts;
     exam.totalItems = examStructure.totalItems;
-    var itemRows = qSheet.getDataRange().getValues();
+    var itemRows = collectItemRowsByExam_(exam.id, analysisType);
     var subjectFullScoreMap = {};
     var subjectPointItemCountMap = {};
     exam.subjects.forEach(function(subjName) {
@@ -1074,7 +1512,7 @@ function getScoreAnalysis(examId, studentId) {
       }
     }
 
-    var scoreRows = scoreSheet.getDataRange().getValues();
+    var scoreRows = collectScoreRowsByExam_(exam.id, analysisType);
     var allScores = [];
     var regionalScores = [];
     var myScore = null;

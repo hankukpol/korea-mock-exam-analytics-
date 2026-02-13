@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>모의고사 성적 분석 시스템</title>
+    <title>현장모의고사 성적 분석 시스템</title>
     <?!= include('Css'); ?>
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -18,7 +18,7 @@
                 <div class="login-logo">
                     <span class="icon"></span>
                 </div>
-                <h1 class="login-title">성적 분석 시스템</h1>
+                <h1 class="login-title">현장모의고사 성적 분석 시스템</h1>
                 <p class="login-subtitle">경찰 / 소방 모의고사 합격 예측</p>
 
                 <div class="form-group">
@@ -75,7 +75,7 @@
                 </div>
 
                 <button id="startAnalysisBtn" class="btn btn-primary" onclick="startAnalysis()">
-                    성적 분석 시작
+                    선택한 시험 열기
                 </button>
                 <button class="btn btn-secondary" onclick="resetToLogin()" style="margin-top:10px; width:100%;">
                     다시 로그인
@@ -486,6 +486,8 @@
         var currentUser = null;
         var selectedItemSubjectIdx = -1; // -1: 전체
         var selectedKillerSubjectIdx = -1; // -1: 전체
+        var myExamAccessMap = {};
+        var admitOnlyMode = false;
 
         function getSelectedType() {
             var selected = document.querySelector('input[name="examType"]:checked');
@@ -515,6 +517,7 @@
                 return;
             }
             currentUser = user;
+            setAdmitOnlyMode(false);
             document.getElementById('loginSection').style.display = 'none';
             document.getElementById('dashboardSection').style.display = 'none';
             document.getElementById('examSelectSection').style.display = 'flex';
@@ -532,6 +535,7 @@
             select.innerHTML = '<option value="">시험을 불러오는 중...</option>';
             msgEl.className = 'message';
             msgEl.style.display = 'none';
+            myExamAccessMap = {};
 
             if (!currentUser || !currentUser.studentId) {
                 select.innerHTML = '<option value="">로그인 정보 없음</option>';
@@ -547,50 +551,58 @@
 
             function renderExamOptions(exams) {
                 if (!Array.isArray(exams) || exams.length === 0) return false;
+                var hasAnalyzable = false;
                 var html = '<option value="">시험을 선택하세요</option>';
                 exams.forEach(function (exam) {
-                    html += '<option value="' + exam.id + '">' + exam.name + ' (' + exam.id + ')</option>';
+                    var examId = String(exam.id || '').trim();
+                    if (!examId) return;
+
+                    var hasScore = !!exam.hasScore;
+                    myExamAccessMap[examId] = {
+                        id: examId,
+                        name: String(exam.name || examId),
+                        date: exam.date || '',
+                        examType: exam.examType || '',
+                        subjects: Array.isArray(exam.subjects) ? exam.subjects : [],
+                        hasScore: hasScore
+                    };
+
+                    if (hasScore) hasAnalyzable = true;
+                    var label = String(exam.name || examId) + ' (' + examId + ')' + (hasScore ? '' : ' · 성적 준비중');
+                    html += '<option value="' + escapeHtml(examId) + '">' + escapeHtml(label) + '</option>';
                 });
                 select.innerHTML = html;
+                if (!hasAnalyzable) {
+                    showMessage(msgEl, '현재 성적 입력 전 단계입니다. 수험표 출력만 가능합니다.', 'success');
+                }
                 return true;
             }
 
             google.script.run
-                .withSuccessHandler(function (allResult) {
-                    if (!allResult || !allResult.success) {
+                .withSuccessHandler(function (result) {
+                    if (!result || !result.success) {
                         select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
-                        showMessage(msgEl, (allResult && allResult.message) || '시험 목록 조회에 실패했습니다.', 'error');
+                        showMessage(msgEl, (result && result.message) || '시험 목록 조회에 실패했습니다.', 'error');
                         return;
                     }
 
-                    var allExams = Array.isArray(allResult.data) ? allResult.data : [];
-                    if (!renderExamOptions(allExams)) {
+                    var exams = Array.isArray(result.data) ? result.data : [];
+                    if (!renderExamOptions(exams)) {
                         select.innerHTML = '<option value="">해당 직렬 시험이 없습니다</option>';
-                        showMessage(msgEl, '해당 직렬의 시험 데이터가 없습니다. 관리자에게 문의해 주세요.', 'error');
+                        showMessage(msgEl, '응시 가능한 시험 데이터가 없습니다. 관리자에게 문의해 주세요.', 'error');
                         return;
                     }
 
-                    // 응시 이력이 있으면 목록을 내 시험 기준으로 좁혀서 다시 표시
-                    google.script.run
-                        .withSuccessHandler(function (myResult) {
-                            if (!myResult || !myResult.success) return;
-                            var myExams = Array.isArray(myResult.data) ? myResult.data : [];
-                            if (!myExams.length) return;
-                            renderExamOptions(myExams);
-                            msgEl.className = 'message';
-                            msgEl.style.display = 'none';
-                        })
-                        .withFailureHandler(function () {
-                            // 실패해도 직렬 전체 시험 목록은 이미 표시되어 있음
-                        })
-                        .getStudentExamList(currentUser.studentId, currentUser.examType);
+                    if (msgEl.classList.contains('success')) return;
+                    msgEl.className = 'message';
+                    msgEl.style.display = 'none';
                 })
                 .withFailureHandler(function (err) {
                     select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
                     var reason = (err && err.message) ? err.message : '서버 연결 실패';
                     showMessage(msgEl, '시험 목록 조회 실패: ' + reason, 'error');
                 })
-                .getExamList(currentUser.examType);
+                .getMyExamAccess(currentUser.studentId, currentUser.examType);
         }
 
         function startAnalysis() {
@@ -604,11 +616,21 @@
             }
 
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span> 분석 중...';
+            btn.innerHTML = '<span class="spinner"></span> 불러오는 중...';
+
+            var examAccess = myExamAccessMap[examId] || null;
+            var canAnalyze = !!(examAccess && examAccess.hasScore);
+
+            if (!canAnalyze) {
+                openAdmitOnlyDashboard(examAccess || { id: examId, name: examId, subjects: [] });
+                btn.disabled = false;
+                btn.innerHTML = '선택한 시험 열기';
+                return;
+            }
 
             loadScoreAnalysis(examId, currentUser.studentId, function () {
                 btn.disabled = false;
-                btn.innerHTML = '성적 분석 시작';
+                btn.innerHTML = '선택한 시험 열기';
             });
         }
 
@@ -688,7 +710,62 @@
                 .getStudentReport(examId, studentId);
         }
 
+        function setAdmitOnlyMode(enabled) {
+            admitOnlyMode = !!enabled;
+            var tabAnalysis = document.getElementById('dashTabAnalysis');
+            if (tabAnalysis) {
+                tabAnalysis.disabled = admitOnlyMode;
+                tabAnalysis.style.display = admitOnlyMode ? 'none' : '';
+            }
+        }
+
+        function openAdmitOnlyDashboard(examAccess) {
+            if (!currentUser) return;
+
+            var examId = String((examAccess && examAccess.id) || '').trim();
+            var examName = String((examAccess && examAccess.name) || examId || '시험').trim();
+            var examDate = (examAccess && examAccess.date) || '';
+            var examSubjects = (examAccess && Array.isArray(examAccess.subjects)) ? examAccess.subjects : [];
+
+            currentData = {
+                student: {
+                    id: currentUser.studentId || currentUser.id || '',
+                    studentId: currentUser.studentId || currentUser.id || '',
+                    name: currentUser.name || '',
+                    type: currentUser.examType || currentUser.type || '',
+                    region: currentUser.region || '',
+                    phone: currentUser.phone || '',
+                    birthDate: currentUser.birthDate || '',
+                    examField: currentUser.examField || '',
+                    examRank: currentUser.examRank || '',
+                    examLocation: currentUser.examLocation || '',
+                    examSubject: currentUser.examSubject || ''
+                },
+                exam: {
+                    id: examId,
+                    name: examName,
+                    date: examDate,
+                    subjects: examSubjects
+                }
+            };
+
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('examSelectSection').style.display = 'none';
+            document.getElementById('dashboardSection').style.display = 'block';
+            document.body.classList.remove('printing-admit');
+
+            document.getElementById('studentNameTitle').innerText = '반갑습니다, ' + (currentData.student.name || '수험생') + '님';
+            document.getElementById('examNameTitle').innerText = (examName || '선택한 시험') + ' 수험표 출력 화면입니다. 성적 입력 후 분석이 가능합니다.';
+
+            setAdmitOnlyMode(true);
+            renderAdmitTicket(currentData);
+            switchDashboardTab('admit');
+        }
+
         function switchDashboardTab(tabName) {
+            if (admitOnlyMode && tabName !== 'admit') {
+                tabName = 'admit';
+            }
             var analysisView = document.getElementById('analysisView');
             var admitView = document.getElementById('admitView');
             var tabAnalysis = document.getElementById('dashTabAnalysis');
@@ -708,7 +785,7 @@
             if (tabAdmit) tabAdmit.classList.toggle('active', isAdmit);
             if (printBtn) printBtn.style.display = isAdmit ? 'inline-block' : 'none';
 
-            if (!isAdmit && currentData) {
+            if (!isAdmit && !admitOnlyMode && currentData) {
                 var activeTab = document.querySelector('.analysis-tab-btn.active');
                 var activeId = activeTab ? activeTab.id : 'detailTabOverview';
                 var map = {
@@ -756,21 +833,28 @@
             var s = data.student || {};
             var e = data.exam || {};
             var subjects = Array.isArray(e.subjects) ? e.subjects : [];
-            var s1 = subjects[0] || '과목1';
-            var s2 = subjects[1] || '과목2';
-            var s3 = subjects[2] || '과목3';
+            var normalizedSubjects = subjects.map(function (name) { return String(name || '').trim(); });
+            function pickPoliceSubject(pattern, fallback) {
+                for (var i = 0; i < normalizedSubjects.length; i++) {
+                    if (pattern.test(normalizedSubjects[i])) return normalizedSubjects[i];
+                }
+                return fallback;
+            }
+            var s1 = pickPoliceSubject(/헌법/, '헌법');
+            var s2 = pickPoliceSubject(/형사법|형사/, '형사법');
+            var s3 = pickPoliceSubject(/경찰학|경찰/, '경찰학');
             var fieldText = s.examField || s.examRank || '일반공채';
             var examTypeText = e.name || '경찰 모의고사';
             if (s.examRank) examTypeText += ' (' + s.examRank + ')';
 
             return ''
                 + '<div class="admit-ticket police-ticket">'
-                + '  <div class="admit-title-main">2026년 경찰공무원 채용시험 응시표</div>'
+                + '  <div class="admit-title-main">2026 현장모의고사 응시표</div>'
                 + '  <table class="admit-table">'
                 + '    <tr><th>구분</th><td>' + escapeHtml(examTypeText) + '</td></tr>'
                 + '    <tr><th>시험회차</th><td>' + escapeHtml((e.id || '-') + ' / ' + (e.name || '-')) + '</td></tr>'
                 + '    <tr><th>응시분야</th><td>' + escapeHtml(fieldText) + '</td></tr>'
-                + '    <tr><th>응시경찰청</th><td>' + escapeHtml(s.region || '-') + '</td></tr>'
+                + '    <tr><th>고사실</th><td>' + escapeHtml(s.examLocation || s.region || '-') + '</td></tr>'
                 + '    <tr><th class="emph">응시번호</th><td class="emph">' + escapeHtml(s.id || '-') + '</td></tr>'
                 + '    <tr><th>성명</th><td>' + escapeHtml(s.name || '-') + '</td></tr>'
                 + '    <tr><th>주민등록번호</th><td>' + escapeHtml(formatResidentNumber(s.birthDate)) + '</td></tr>'
@@ -785,7 +869,7 @@
                 + '  <div class="admit-sign">(주) 올패스공무원독학원</div>'
                 + '  <div class="admit-notice">'
                 + '    <div class="admit-notice-title">[주 의 사 항]</div>'
-                + '    <p>응시표 출력 후 응시번호, 응시경찰청, 시험과목 등을 반드시 확인해 주세요.</p>'
+                + '    <p>응시표 출력 후 응시번호, 고사실, 시험과목 등을 반드시 확인해 주세요.</p>'
                 + '    <p>응시표와 신분증을 지참하지 않으면 시험에 응시할 수 없습니다.</p>'
                 + '  </div>'
                 + '</div>';
@@ -941,6 +1025,7 @@
             if (!data || !data.student || !data.exam) {
                 throw new Error('필수 분석 데이터가 누락되었습니다.');
             }
+            setAdmitOnlyMode(false);
             document.getElementById('loginSection').style.display = 'none';
             document.getElementById('examSelectSection').style.display = 'none';
             document.getElementById('dashboardSection').style.display = 'block';
@@ -2017,6 +2102,7 @@
             regionalCompareChart = destroyChart(regionalCompareChart);
             distributionChart = destroyChart(distributionChart);
             overviewCompareChart = destroyChart(overviewCompareChart);
+            setAdmitOnlyMode(false);
             document.getElementById('dashboardSection').style.display = 'none';
             if (currentUser) {
                 document.getElementById('examSelectSection').style.display = 'flex';
@@ -2037,6 +2123,8 @@
             overviewCompareChart = destroyChart(overviewCompareChart);
             currentData = null;
             currentUser = null;
+            myExamAccessMap = {};
+            setAdmitOnlyMode(false);
             selectedItemSubjectIdx = -1;
             selectedKillerSubjectIdx = -1;
             document.getElementById('dashboardSection').style.display = 'none';
