@@ -1225,7 +1225,7 @@ function getExamList(studentType) {
       if (!examId) continue;
 
       var examType = inferExamType_(examId, row[EXAM_COL.S1]);
-      if (studentType && examType && studentType !== examType) continue;
+      if (studentType && examType && examType !== studentType) continue;
 
       list.push({
         id: examId,
@@ -1257,6 +1257,26 @@ function getMyExamAccess(studentId, studentType) {
       return { success: false, message: '수험번호가 필요합니다.' };
     }
 
+    // 직렬 값이 비어 전달된 경우 수험번호 기준으로 직렬을 보정한다.
+    if (!sType) {
+      var policeRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_POLICE));
+      for (var p = 0; p < policeRecords.length; p++) {
+        if (String(policeRecords[p].studentId || '').trim() === sid) {
+          sType = String(policeRecords[p].type || '').trim();
+          break;
+        }
+      }
+      if (!sType) {
+        var fireRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_FIRE));
+        for (var f = 0; f < fireRecords.length; f++) {
+          if (String(fireRecords[f].studentId || '').trim() === sid) {
+            sType = String(fireRecords[f].type || '').trim();
+            break;
+          }
+        }
+      }
+    }
+
     var examSheet = getSheet(CONFIG.SHEET_EXAM);
     var examRows = examSheet.getDataRange().getValues();
     var list = [];
@@ -1269,7 +1289,7 @@ function getMyExamAccess(studentId, studentType) {
       if (!examId) continue;
 
       var examType = inferExamType_(examId, row[EXAM_COL.S1]);
-      if (sType && examType && sType !== examType) continue;
+      if (sType && examType && examType !== sType) continue;
 
       var subjects = [
         String(row[EXAM_COL.S1] || '').trim(),
@@ -1306,6 +1326,7 @@ function getMyExamAccess(studentId, studentType) {
       }
     }
 
+    var hasMasterExams = list.length > 0;
     Object.keys(scoreExamMap).forEach(function(examId) {
       if (examMap[examId]) {
         examMap[examId].hasScore = true;
@@ -1313,9 +1334,11 @@ function getMyExamAccess(studentId, studentType) {
         return;
       }
 
-      var fallbackType = inferExamType_(examId, '');
-      if (sType && fallbackType && sType !== fallbackType) return;
+      // 시험 마스터가 전혀 없을 때만 비상 폴백으로 노출한다.
+      if (hasMasterExams) return;
 
+      var fallbackType = inferExamType_(examId, '');
+      if (sType && fallbackType && fallbackType !== sType) return;
       list.push({
         id: examId,
         name: examId + ' (마스터 정보 없음)',
@@ -1388,7 +1411,7 @@ function getStudentExamList(studentId, studentType) {
       if (!eId || !myExamMap[eId]) continue;
 
       var eType = inferExamType_(eId, row[EXAM_COL.S1]);
-      if (sType && eType && sType !== eType) continue;
+      if (sType && eType && eType !== sType) continue;
 
       list.push({
         id: eId,
@@ -1404,7 +1427,7 @@ function getStudentExamList(studentId, studentType) {
       var missingId = myExamIds[k];
       if (foundMap[missingId]) continue;
       var missingType = inferExamType_(missingId, '');
-      if (sType && missingType && sType !== missingType) continue;
+      if (sType && missingType && missingType !== sType) continue;
       list.push({
         id: missingId,
         name: missingId + ' (마스터 정보 없음)',

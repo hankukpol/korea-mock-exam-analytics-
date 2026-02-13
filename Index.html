@@ -46,53 +46,32 @@
                     </div>
                 </div>
 
-                <button id="loginBtn" class="btn btn-primary" onclick="handleLogin()">성적 분석 시작</button>
-
-                <div id="loginMessage" class="message"></div>
-            </div>
-
-            <p style="text-align:center; margin-top:16px; font-size:12px; color:rgba(255,255,255,0.3);">
-                ※ 로그인 후 응시한 시험 회차를 선택할 수 있습니다
-            </p>
-        </div>
-    </div>
-
-    <!-- ===== 로그인 후 시험 선택 화면 ===== -->
-    <div id="examSelectSection" class="login-container" style="display:none;">
-        <div class="login-box">
-            <div class="glass-card">
-                <div class="login-logo">
-                    <span class="icon"></span>
-                </div>
-                <h1 class="login-title">응시 시험 선택</h1>
-                <p class="login-subtitle" id="examSelectSubtitle">로그인 완료. 응시한 시험 회차를 선택해 주세요.</p>
-
-                <div class="form-group">
+                <div id="inlineExamDivider" class="login-divider" style="display:none;"></div>
+                <div id="inlineExamSection" class="form-group" style="display:none;">
                     <label for="postLoginExamId">시험 회차</label>
                     <select id="postLoginExamId" class="form-input">
                         <option value="">시험을 불러오는 중...</option>
                     </select>
+                    <p class="login-inline-hint">시험이 1개인 경우 자동으로 바로 열립니다.</p>
                 </div>
 
-                <button id="startAnalysisBtn" class="btn btn-primary" onclick="startAnalysis()">
-                    선택한 시험 열기
-                </button>
-                <button class="btn btn-secondary" onclick="resetToLogin()" style="margin-top:10px; width:100%;">
-                    다시 로그인
-                </button>
+                <button id="loginBtn" class="btn btn-primary" onclick="handleLogin()">확인</button>
 
-                <div id="examSelectMessage" class="message"></div>
+                <div id="loginMessage" class="message"></div>
             </div>
+
+            <p style="text-align:center; margin-top:16px; font-size:12px; color:var(--text-muted);">
+                ※ 인증 후 같은 화면에서 시험 선택 또는 자동 진입됩니다
+            </p>
         </div>
     </div>
 
     <!-- ===== 성적 분석 대시보드 화면 ===== -->
-    <div id="dashboardSection" class="dashboard-section"
-        style="display:none; max-width:1100px; margin:0 auto; padding:24px;">
+    <div id="dashboardSection" class="dashboard-section" style="display:none;">
         <div class="dashboard-header">
             <div class="dashboard-header-main">
                 <h2 id="studentNameTitle">반갑습니다, OOO님</h2>
-                <p id="examNameTitle" style="color:rgba(255,255,255,0.6);">2026 시즌1 1회차 모의고사 분석 결과입니다.</p>
+                <p id="examNameTitle" style="color:var(--text-muted);">2026 시즌1 1회차 모의고사 분석 결과입니다.</p>
                 <div class="dashboard-view-tabs">
                     <button id="dashTabAnalysis" class="dash-tab-btn active" onclick="switchDashboardTab('analysis')">성적
                         분석</button>
@@ -488,6 +467,8 @@
         var selectedKillerSubjectIdx = -1; // -1: 전체
         var myExamAccessMap = {};
         var admitOnlyMode = false;
+        var loginStage = 'credentials'; // credentials | exam
+        var examLoadVersion = 0;
 
         function getSelectedType() {
             var selected = document.querySelector('input[name="examType"]:checked');
@@ -508,27 +489,86 @@
             if (type === '소방' && fire) fire.checked = true;
 
             updateTypeUI();
+            if (loginStage === 'exam') {
+                examLoadVersion++;
+                currentUser = null;
+                myExamAccessMap = {};
+                setInlineExamStage(false);
+                showMessage(document.getElementById('loginMessage'), '직렬이 변경되어 다시 확인이 필요합니다.', 'error');
+            }
         }
 
-        function openExamSelect(user) {
+        function setInlineExamStage(enabled) {
+            loginStage = enabled ? 'exam' : 'credentials';
+            var divider = document.getElementById('inlineExamDivider');
+            var section = document.getElementById('inlineExamSection');
+            var select = document.getElementById('postLoginExamId');
+            var btn = document.getElementById('loginBtn');
+
+            if (divider) divider.style.display = enabled ? 'block' : 'none';
+            if (section) section.style.display = enabled ? 'block' : 'none';
+            if (select && !enabled) {
+                select.innerHTML = '<option value="">시험을 불러오는 중...</option>';
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '확인';
+            }
+        }
+
+        function isCurrentUserInputMatch(studentId, name, examType) {
+            if (!currentUser) return false;
+            return String(currentUser.studentId || '').trim() === String(studentId || '').trim()
+                && String(currentUser.name || '').trim() === String(name || '').trim()
+                && String(currentUser.examType || currentUser.type || '').trim() === String(examType || '').trim();
+        }
+
+        function collapseInlineExamIfCredentialChanged() {
+            if (loginStage !== 'exam') return;
+            var sid = document.getElementById('studentId').value.trim();
+            var name = document.getElementById('userName').value.trim();
+            var examType = getSelectedType();
+            if (isCurrentUserInputMatch(sid, name, examType)) return;
+            examLoadVersion++;
+            currentUser = null;
+            myExamAccessMap = {};
+            setInlineExamStage(false);
+        }
+
+        function buildUserSessionKey(user) {
+            if (!user) return '';
+            return [
+                String(user.studentId || user.id || '').trim(),
+                String(user.name || '').trim(),
+                String(user.examType || user.type || '').trim()
+            ].join('|');
+        }
+
+        function openExamSelect(user, autoEnterSingle) {
             if (!user || !user.studentId) {
                 resetToLogin();
                 showMessage(document.getElementById('loginMessage'), '로그인 정보가 올바르지 않습니다. 다시 로그인해 주세요.', 'error');
                 return;
             }
+            var selectedType = getSelectedType();
+            if (selectedType) {
+                user.examType = selectedType;
+                user.type = selectedType;
+            }
             currentUser = user;
             setAdmitOnlyMode(false);
-            document.getElementById('loginSection').style.display = 'none';
             document.getElementById('dashboardSection').style.display = 'none';
-            document.getElementById('examSelectSection').style.display = 'flex';
-            var displayName = user.name ? user.name : '수험생';
-            document.getElementById('examSelectSubtitle').innerText = displayName + '님, 응시한 시험 회차를 선택해 주세요.';
-            loadMyExamList();
+            document.getElementById('loginSection').style.display = 'flex';
+            setInlineExamStage(true);
+            showMessage(document.getElementById('loginMessage'), '', '');
+            loadMyExamList(autoEnterSingle !== false);
         }
 
-        function loadMyExamList() {
+        function loadMyExamList(autoEnterSingle) {
             var select = document.getElementById('postLoginExamId');
-            var msgEl = document.getElementById('examSelectMessage');
+            var msgEl = document.getElementById('loginMessage');
+            var loadVersion = ++examLoadVersion;
+            var sessionKeyAtRequest = buildUserSessionKey(currentUser);
 
             if (!select || !msgEl) return;
 
@@ -550,12 +590,16 @@
             }
 
             function renderExamOptions(exams) {
-                if (!Array.isArray(exams) || exams.length === 0) return false;
+                if (!Array.isArray(exams) || exams.length === 0) return { ok: false, count: 0, firstExamId: '' };
                 var hasAnalyzable = false;
-                var html = '<option value="">시험을 선택하세요</option>';
+                var firstExamId = '';
+                var uniqueCount = 0;
+                var html = exams.length > 1 ? '<option value="">시험을 선택하세요</option>' : '';
                 exams.forEach(function (exam) {
                     var examId = String(exam.id || '').trim();
                     if (!examId) return;
+                    if (myExamAccessMap[examId]) return;
+                    if (!firstExamId) firstExamId = examId;
 
                     var hasScore = !!exam.hasScore;
                     myExamAccessMap[examId] = {
@@ -566,20 +610,29 @@
                         subjects: Array.isArray(exam.subjects) ? exam.subjects : [],
                         hasScore: hasScore
                     };
+                    uniqueCount++;
 
                     if (hasScore) hasAnalyzable = true;
                     var label = String(exam.name || examId) + ' (' + examId + ')' + (hasScore ? '' : ' · 성적 준비중');
                     html += '<option value="' + escapeHtml(examId) + '">' + escapeHtml(label) + '</option>';
                 });
                 select.innerHTML = html;
-                if (!hasAnalyzable) {
-                    showMessage(msgEl, '현재 성적 입력 전 단계입니다. 수험표 출력만 가능합니다.', 'success');
+                if (uniqueCount === 1 && firstExamId) {
+                    select.value = firstExamId;
                 }
-                return true;
+                return {
+                    ok: uniqueCount > 0,
+                    count: uniqueCount,
+                    firstExamId: firstExamId,
+                    hasAnalyzable: hasAnalyzable
+                };
             }
 
             google.script.run
                 .withSuccessHandler(function (result) {
+                    if (loadVersion !== examLoadVersion) return;
+                    if (!currentUser || buildUserSessionKey(currentUser) !== sessionKeyAtRequest) return;
+
                     if (!result || !result.success) {
                         select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
                         showMessage(msgEl, (result && result.message) || '시험 목록 조회에 실패했습니다.', 'error');
@@ -587,28 +640,50 @@
                     }
 
                     var exams = Array.isArray(result.data) ? result.data : [];
-                    if (!renderExamOptions(exams)) {
+                    var rendered = renderExamOptions(exams);
+                    if (!rendered.ok) {
                         select.innerHTML = '<option value="">해당 직렬 시험이 없습니다</option>';
                         showMessage(msgEl, '응시 가능한 시험 데이터가 없습니다. 관리자에게 문의해 주세요.', 'error');
                         return;
                     }
 
-                    if (msgEl.classList.contains('success')) return;
-                    msgEl.className = 'message';
-                    msgEl.style.display = 'none';
+                    if (rendered.count === 1 && rendered.firstExamId && autoEnterSingle) {
+                        showMessage(msgEl, '시험 1개가 확인되어 자동으로 바로 진입합니다.', 'success');
+                        startAnalysis(rendered.firstExamId);
+                        return;
+                    }
+
+                    if (!rendered.hasAnalyzable) {
+                        showMessage(msgEl, '현재 성적 입력 전 단계입니다. 수험표 출력만 가능합니다.', 'success');
+                        return;
+                    }
+                    showMessage(msgEl, '시험 회차를 선택한 뒤 확인 버튼을 눌러주세요.', 'success');
                 })
                 .withFailureHandler(function (err) {
+                    if (loadVersion !== examLoadVersion) return;
+                    if (!currentUser || buildUserSessionKey(currentUser) !== sessionKeyAtRequest) return;
+
                     select.innerHTML = '<option value="">시험 목록 조회 실패</option>';
                     var reason = (err && err.message) ? err.message : '서버 연결 실패';
                     showMessage(msgEl, '시험 목록 조회 실패: ' + reason, 'error');
                 })
-                .getMyExamAccess(currentUser.studentId, currentUser.examType);
+                .getMyExamAccess(
+                    currentUser.studentId,
+                    String(currentUser.examType || currentUser.type || getSelectedType() || '').trim()
+                );
         }
 
-        function startAnalysis() {
-            var examId = document.getElementById('postLoginExamId').value;
-            var msgEl = document.getElementById('examSelectMessage');
-            var btn = document.getElementById('startAnalysisBtn');
+        function startAnalysis(forcedExamId) {
+            var select = document.getElementById('postLoginExamId');
+            var examId = String(forcedExamId || (select ? select.value : '')).trim();
+            var msgEl = document.getElementById('loginMessage');
+            var btn = document.getElementById('loginBtn');
+
+            if (!btn) return;
+            if (!currentUser || !currentUser.studentId) {
+                showMessage(msgEl, '로그인 세션이 만료되었습니다. 다시 확인해 주세요.', 'error');
+                return;
+            }
 
             if (!examId) {
                 showMessage(msgEl, '분석할 시험 회차를 선택해 주세요.', 'error');
@@ -624,13 +699,13 @@
             if (!canAnalyze) {
                 openAdmitOnlyDashboard(examAccess || { id: examId, name: examId, subjects: [] });
                 btn.disabled = false;
-                btn.innerHTML = '선택한 시험 열기';
+                btn.innerHTML = '확인';
                 return;
             }
 
             loadScoreAnalysis(examId, currentUser.studentId, function () {
                 btn.disabled = false;
-                btn.innerHTML = '선택한 시험 열기';
+                btn.innerHTML = '확인';
             });
         }
 
@@ -651,6 +726,18 @@
                 return;
             }
 
+            if (loginStage === 'exam' && isCurrentUserInputMatch(studentId, name, examType)) {
+                startAnalysis();
+                return;
+            }
+
+            if (loginStage === 'exam' && !isCurrentUserInputMatch(studentId, name, examType)) {
+                examLoadVersion++;
+                currentUser = null;
+                myExamAccessMap = {};
+                setInlineExamStage(false);
+            }
+
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> 인증 중...';
             msgEl.className = 'message';
@@ -661,17 +748,17 @@
                 .withSuccessHandler(function (loginResult) {
                     if (loginResult.success) {
                         btn.disabled = false;
-                        btn.innerHTML = '로그인';
-                        openExamSelect(loginResult.data);
+                        btn.innerHTML = '확인';
+                        openExamSelect(loginResult.data, true);
                     } else {
                         btn.disabled = false;
-                        btn.innerHTML = '로그인';
+                        btn.innerHTML = '확인';
                         showMessage(msgEl, loginResult.message, 'error');
                     }
                 })
                 .withFailureHandler(function (err) {
                     btn.disabled = false;
-                    btn.innerHTML = '로그인';
+                    btn.innerHTML = '확인';
                     showMessage(msgEl, '서버 오류가 발생했습니다. 다시 시도해 주세요.', 'error');
                 })
                 .loginUser(studentId, name, '', examType);
@@ -688,24 +775,15 @@
                             renderDashboard(analysisResult.data);
                         } catch (e) {
                             console.error('Render error:', e);
-                            var msgEl = document.getElementById('examSelectSection').style.display === 'none'
-                                ? document.getElementById('loginMessage')
-                                : document.getElementById('examSelectMessage');
-                            showMessage(msgEl, '레이아웃 렌더링 중 오류가 발생했습니다. (' + e.message + ')', 'error');
+                            showMessage(document.getElementById('loginMessage'), '레이아웃 렌더링 중 오류가 발생했습니다. (' + e.message + ')', 'error');
                         }
                     } else {
-                        var msgEl = document.getElementById('examSelectSection').style.display === 'none'
-                            ? document.getElementById('loginMessage')
-                            : document.getElementById('examSelectMessage');
-                        showMessage(msgEl, analysisResult.message, 'error');
+                        showMessage(document.getElementById('loginMessage'), analysisResult.message, 'error');
                     }
                 })
                 .withFailureHandler(function (err) {
                     if (done) done();
-                    var msgEl = document.getElementById('examSelectSection').style.display === 'none'
-                        ? document.getElementById('loginMessage')
-                        : document.getElementById('examSelectMessage');
-                    showMessage(msgEl, '데이터 분석 중 오류가 발생했습니다.', 'error');
+                    showMessage(document.getElementById('loginMessage'), '데이터 분석 중 오류가 발생했습니다.', 'error');
                 })
                 .getStudentReport(examId, studentId);
         }
@@ -714,8 +792,14 @@
             admitOnlyMode = !!enabled;
             var tabAnalysis = document.getElementById('dashTabAnalysis');
             if (tabAnalysis) {
+                if (!tabAnalysis.dataset.defaultLabel) {
+                    tabAnalysis.dataset.defaultLabel = tabAnalysis.textContent.replace(/\s+/g, ' ').trim();
+                }
                 tabAnalysis.disabled = admitOnlyMode;
-                tabAnalysis.style.display = admitOnlyMode ? 'none' : '';
+                tabAnalysis.textContent = admitOnlyMode
+                    ? '성적 분석 (시험 종료 후 확인 가능)'
+                    : tabAnalysis.dataset.defaultLabel;
+                tabAnalysis.title = admitOnlyMode ? '시험 종료 후 성적 입력이 완료되면 확인할 수 있습니다.' : '';
             }
         }
 
@@ -750,7 +834,6 @@
             };
 
             document.getElementById('loginSection').style.display = 'none';
-            document.getElementById('examSelectSection').style.display = 'none';
             document.getElementById('dashboardSection').style.display = 'block';
             document.body.classList.remove('printing-admit');
 
@@ -864,9 +947,9 @@
                 + '      <div>제3과목: ' + escapeHtml(s3) + '</div>'
                 + '    </td></tr>'
                 + '  </table>'
-                + '  <div class="admit-photo-box">증명사진</div>'
+                + '  <div class="admit-photo-box">올패스<br>공무원독학원<br><span>직인생략</span></div>'
                 + '  <div class="admit-date">' + escapeHtml(normalizeDateText(new Date(), '.')) + '</div>'
-                + '  <div class="admit-sign">(주) 올패스공무원독학원</div>'
+                + '  <div class="admit-sign">올패스공무원독학원</div>'
                 + '  <div class="admit-notice">'
                 + '    <div class="admit-notice-title">[주 의 사 항]</div>'
                 + '    <p>응시표 출력 후 응시번호, 고사실, 시험과목 등을 반드시 확인해 주세요.</p>'
@@ -952,6 +1035,10 @@
             return fmt1(v) + '%';
         }
 
+        function isMobileViewport() {
+            return !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+        }
+
         function toTopPercentFromRank(rank, totalCount) {
             var r = numberOrZero(rank);
             var n = numberOrZero(totalCount);
@@ -1027,7 +1114,6 @@
             }
             setAdmitOnlyMode(false);
             document.getElementById('loginSection').style.display = 'none';
-            document.getElementById('examSelectSection').style.display = 'none';
             document.getElementById('dashboardSection').style.display = 'block';
             document.body.classList.remove('printing-admit');
 
@@ -1601,6 +1687,7 @@
             if (!canvas) return;
             subjectPercentileChart = destroyChart(subjectPercentileChart);
             var ctx = canvas.getContext('2d');
+            var isMobile = isMobileViewport();
 
             var subjects = (data.stats && data.stats.subjects) || [];
             var labels = ['총점'].concat(subjects.map(function (s) { return s.name; }));
@@ -1624,7 +1711,8 @@
                             return context.dataIndex === 0 ? '#00bcd4' : '#3366ff';
                         },
                         borderRadius: 4,
-                        barThickness: 40
+                        barThickness: isMobile ? 24 : 40,
+                        maxBarThickness: isMobile ? 28 : 44
                     }]
                 },
                 options: {
@@ -1637,7 +1725,16 @@
                             grid: { color: '#f1f3f5' },
                             ticks: { callback: function (v) { return v + '%'; } }
                         },
-                        x: { grid: { display: false } }
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                autoSkip: isMobile,
+                                maxTicksLimit: isMobile ? 5 : undefined,
+                                maxRotation: isMobile ? 35 : 0,
+                                minRotation: isMobile ? 35 : 0,
+                                font: { size: isMobile ? 10 : 12 }
+                            }
+                        }
                     },
                     plugins: {
                         legend: { display: false },
@@ -1680,6 +1777,7 @@
             if (!canvas) return;
             overviewCompareChart = destroyChart(overviewCompareChart);
             var ctx = canvas.getContext('2d');
+            var isMobile = isMobileViewport();
 
             var st = data.stats || {};
             var labels = ['최고점', '내 점수', '상위10%', '상위30%'];
@@ -1714,7 +1812,16 @@
                             beginAtZero: true,
                             grid: { color: '#f1f3f5' }
                         },
-                        x: { grid: { display: false } }
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                autoSkip: isMobile,
+                                maxTicksLimit: isMobile ? 4 : undefined,
+                                maxRotation: isMobile ? 25 : 0,
+                                minRotation: isMobile ? 25 : 0,
+                                font: { size: isMobile ? 10 : 12 }
+                            }
+                        }
                     },
                     plugins: {
                         legend: { display: false },
@@ -1753,6 +1860,7 @@
             if (!canvas) return;
             radarChart = destroyChart(radarChart);
             var ctx = canvas.getContext('2d');
+            var isMobile = isMobileViewport();
 
             var labels = subjects.map(function (s) { return s.name; });
             var myData = subjects.map(function (s) {
@@ -1791,7 +1899,7 @@
                         r: {
                             angleLines: { color: '#e1e5ee' },
                             grid: { color: '#e1e5ee' },
-                            pointLabels: { color: '#212529', font: { size: 13 } },
+                            pointLabels: { color: '#212529', font: { size: isMobile ? 11 : 13 } },
                             ticks: { display: false, stepSize: 20 },
                             suggestedMin: 0,
                             suggestedMax: 100
@@ -1809,6 +1917,7 @@
             if (!canvas) return;
             subjectAvgBarChart = destroyChart(subjectAvgBarChart);
             var ctx = canvas.getContext('2d');
+            var isMobile = isMobileViewport();
 
             subjectAvgBarChart = new Chart(ctx, {
                 type: 'bar',
@@ -1820,14 +1929,16 @@
                             var max = numberOrZero(s.max) || 100;
                             return (numberOrZero(s.avg) / max) * 100;
                         }),
-                        backgroundColor: '#7dbb64'
+                        backgroundColor: '#7dbb64',
+                        maxBarThickness: isMobile ? 18 : 34
                     }, {
                         label: '내 점수',
                         data: subjects.map(function (s) {
                             var max = numberOrZero(s.max) || 100;
                             return (numberOrZero(s.my) / max) * 100;
                         }),
-                        backgroundColor: '#3c6ee8'
+                        backgroundColor: '#3c6ee8',
+                        maxBarThickness: isMobile ? 18 : 34
                     }]
                 },
                 options: {
@@ -2088,6 +2199,8 @@
 
         document.addEventListener('DOMContentLoaded', function () {
             updateTypeUI();
+            document.getElementById('studentId').addEventListener('input', collapseInlineExamIfCredentialChanged);
+            document.getElementById('userName').addEventListener('input', collapseInlineExamIfCredentialChanged);
         });
 
         window.addEventListener('afterprint', function () {
@@ -2105,9 +2218,10 @@
             setAdmitOnlyMode(false);
             document.getElementById('dashboardSection').style.display = 'none';
             if (currentUser) {
-                document.getElementById('examSelectSection').style.display = 'flex';
+                openExamSelect(currentUser, false);
             } else {
                 document.getElementById('loginSection').style.display = 'flex';
+                setInlineExamStage(false);
             }
             currentData = null;
             selectedItemSubjectIdx = -1;
@@ -2122,16 +2236,18 @@
             distributionChart = destroyChart(distributionChart);
             overviewCompareChart = destroyChart(overviewCompareChart);
             currentData = null;
+            examLoadVersion++;
             currentUser = null;
             myExamAccessMap = {};
             setAdmitOnlyMode(false);
+            setInlineExamStage(false);
+            loginStage = 'credentials';
             selectedItemSubjectIdx = -1;
             selectedKillerSubjectIdx = -1;
             document.getElementById('dashboardSection').style.display = 'none';
-            document.getElementById('examSelectSection').style.display = 'none';
             document.getElementById('loginSection').style.display = 'flex';
             document.getElementById('loginBtn').disabled = false;
-            document.getElementById('loginBtn').innerHTML = '로그인';
+            document.getElementById('loginBtn').innerHTML = '확인';
             document.getElementById('loginMessage').className = 'message';
             document.getElementById('loginMessage').style.display = 'none';
         }

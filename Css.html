@@ -84,6 +84,17 @@
     margin-bottom: 30px;
   }
 
+  .login-divider {
+    border-top: 1px dashed var(--border-color);
+    margin: 16px 0 14px;
+  }
+
+  .login-inline-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
   /* ===== 폼 요소 ===== */
   .form-group {
     margin-bottom: 18px;
@@ -189,26 +200,36 @@
   }
 
   .action-btn {
-    padding: 8px 16px;
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 18px;
+    font-size: 14px;
     font-weight: 600;
-    border-radius: 999px;
-    background: #fff;
-    border: 1px solid var(--border-color);
+    border-radius: 99px;
+    background: #ffffff;
+    border: 1.5px solid #e9ecef;
     color: #495057;
-    transition: all 0.2s;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
   }
 
   .action-btn:hover {
-    background: #f8f9fa;
-    border-color: #adb5bd;
-    color: #212529;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-2px);
+  }
+
+  .action-btn:active {
+    transform: translateY(0);
   }
 
   .dashboard-header-main {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    width: 100%;
   }
 
   /* 요약 카드 그리드 복구 */
@@ -289,6 +310,12 @@
     background: #fff;
     color: var(--primary-color);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+
+  .dash-tab-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    color: #868e96;
   }
 
   #analysisPanelSubject .data-table th,
@@ -730,10 +757,24 @@
     margin: 12px auto 8px;
     border: 1px solid #333;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
-    color: #666;
+    font-size: 13px;
+    font-weight: 700;
+    color: #111;
+    text-align: center;
+    background: #f8f8ff;
+    line-height: 1.4;
+  }
+
+  .admit-photo-box span {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 2px 8px;
+    border: 1px solid #444;
+    font-size: 11px;
+    font-weight: 600;
   }
 
   .admit-date {
@@ -772,14 +813,15 @@
     text-align: center;
     font-weight: 700;
     background: #f8f8ff;
+    line-height: 1.4;
   }
 
   .fire-main-table .fire-brand span {
     display: inline-block;
-    margin-top: 8px;
+    margin-top: 10px;
     padding: 2px 8px;
     border: 1px solid #444;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
   }
 
@@ -800,12 +842,16 @@
   }
 
   @media (max-width: 992px) {
+    .dashboard-section {
+      padding: 16px;
+    }
+
     .analysis-layout {
       grid-template-columns: 1fr;
     }
 
     .summary-cards {
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .analysis-2col {
@@ -822,6 +868,29 @@
       gap: 10px;
     }
 
+    .dashboard-view-tabs {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .header-actions {
+      width: 100%;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding-top: 0;
+    }
+
+    .header-actions .action-btn {
+      flex: 1 1 calc(50% - 4px);
+      min-width: 140px;
+      text-align: center;
+    }
+
+    .analysis-subtabs {
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 10px;
+    }
+
     .admit-title-main {
       font-size: 22px;
     }
@@ -830,6 +899,79 @@
     .admit-table td {
       font-size: 13px;
       padding: 6px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .dashboard-section {
+      padding: 12px;
+    }
+
+    .summary-cards {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .stat-card {
+      padding: 16px;
+    }
+
+    .stat-number {
+      font-size: 24px;
+    }
+
+    .dashboard-view-tabs {
+      padding: 3px;
+    }
+
+    .dash-tab-btn {
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+
+    .analysis-subtabs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .analysis-tab-btn {
+      padding: 12px;
+      gap: 8px;
+      aspect-ratio: auto;
+      min-height: 92px;
+    }
+
+    .analysis-tab-btn .menu-icon {
+      width: 36px;
+      height: 36px;
+      font-size: 18px;
+    }
+
+    .analysis-tab-btn .menu-label {
+      font-size: 12px;
+    }
+
+    .header-actions .action-btn {
+      flex: 1 1 100%;
+      width: 100%;
+    }
+
+    .analysis-note {
+      font-size: 12px;
+    }
+
+    .analysis-panel canvas {
+      height: 220px !important;
+    }
+
+    #analysisPanelDistribution canvas {
+      height: 240px !important;
+    }
+
+    .data-table th,
+    .data-table td {
+      padding: 7px;
+      font-size: 11px;
     }
   }
 
