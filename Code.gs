@@ -25,7 +25,7 @@ var STUDENT_HEADERS = [
 ];
 var EXAM_HEADERS = ['시험ID', '시험명', '시행일', '과목1', '과목2', '과목3'];
 var SCORE_HEADERS = ['시험ID', '수험번호', '과목1점수', '과목2점수', '과목3점수', '총점', '평균'];
-var QUESTION_HEADERS = ['시험ID', '문항번호', '정답', '배점', '정답률', '난이도'];
+var QUESTION_HEADERS = ['시험ID', '문항번호', '과목명', '정답', '배점', '정답률', '난이도'];
 var LOG_HEADERS = ['이름', '연락처', '접속시간', '작업', 'IP정보'];
 
 var STUDENT_COL = {
@@ -66,10 +66,11 @@ var SCORE_COL = {
 var ITEM_COL = {
   EXAM_ID: 0,
   NUM: 1,
-  ANSWER: 2,
-  POINTS: 3,
-  CORRECT_RATE: 4,
-  DIFFICULTY: 5
+  SUBJECT: 2,
+  ANSWER: 3,
+  POINTS: 4,
+  CORRECT_RATE: 5,
+  DIFFICULTY: 6
 };
 
 // ============================================
@@ -112,6 +113,9 @@ function getSheet(sheetName) {
   }
   if (sheetName === CONFIG.SHEET_STUDENTS_POLICE || sheetName === CONFIG.SHEET_STUDENTS_FIRE) {
     ensureStudentsSchema_(sheet, sheetName);
+  }
+  if (isQuestionSheetName_(sheetName)) {
+    migrateItemAnalysisAddSubjectColumn_(sheet);
   }
   return sheet;
 }
@@ -166,6 +170,50 @@ function ensureStudentsSchema_(sheet, sheetName) {
   }
   sheet.getRange(1, 1, 1, STUDENT_HEADERS.length).setValues([STUDENT_HEADERS]);
   styleHeader_(sheet, STUDENT_HEADERS.length, '#4285f4');
+}
+
+function migrateItemAnalysisAddSubjectColumn_(sheet) {
+  if (!sheet) return false;
+
+  var sheetName = sheet.getName();
+  if (!isQuestionSheetName_(sheetName)) return false;
+
+  if (sheet.getLastRow() < 1) {
+    initSheet(sheet, sheetName);
+    return true;
+  }
+
+  if (sheet.getLastColumn() < 2) {
+    if (sheet.getLastColumn() < QUESTION_HEADERS.length) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), QUESTION_HEADERS.length - sheet.getLastColumn());
+    }
+    sheet.getRange(1, 1, 1, QUESTION_HEADERS.length).setValues([QUESTION_HEADERS]);
+    styleHeader_(sheet, QUESTION_HEADERS.length, '#673ab7');
+    return true;
+  }
+
+  var headerCols = Math.max(sheet.getLastColumn(), QUESTION_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, headerCols).getValues()[0];
+  var first = String(header[0] || '').trim();
+  var second = String(header[1] || '').trim();
+  var third = String(header[2] || '').trim();
+  var changed = false;
+
+  // 기존 6컬럼 스키마: 시험ID | 문항번호 | 정답 | ...
+  // 3번째 컬럼(C)에 과목명 컬럼을 삽입해 하위 호환을 유지한다.
+  if (first === '시험ID' && second === '문항번호' && third !== '과목명') {
+    sheet.insertColumnBefore(3);
+    changed = true;
+  }
+
+  if (sheet.getLastColumn() < QUESTION_HEADERS.length) {
+    sheet.insertColumnsAfter(sheet.getLastColumn(), QUESTION_HEADERS.length - sheet.getLastColumn());
+    changed = true;
+  }
+
+  sheet.getRange(1, 1, 1, QUESTION_HEADERS.length).setValues([QUESTION_HEADERS]);
+  styleHeader_(sheet, QUESTION_HEADERS.length, '#673ab7');
+  return changed;
 }
 
 function getStudentSheetName_(type) {
@@ -322,7 +370,15 @@ function migrateLegacyScoresToSplit_(legacySheet, policeSheet, fireSheet, examTy
 }
 
 function migrateLegacyItemsToSplit_(legacySheet, policeSheet, fireSheet, examTypeMap) {
-  if (!legacySheet || legacySheet.getLastRow() < 2) {
+  if (!legacySheet) {
+    return { police: 0, fire: 0, unknown: 0 };
+  }
+
+  migrateItemAnalysisAddSubjectColumn_(legacySheet);
+  migrateItemAnalysisAddSubjectColumn_(policeSheet);
+  migrateItemAnalysisAddSubjectColumn_(fireSheet);
+
+  if (legacySheet.getLastRow() < 2) {
     return { police: 0, fire: 0, unknown: 0 };
   }
 
@@ -446,7 +502,10 @@ function getQuestionSheetsForType_(type) {
 
   var sheets = names.map(function(name) { return getSheet(name); });
   var legacy = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SHEET_QUESTIONS_LEGACY);
-  if (legacy) sheets.push(legacy);
+  if (legacy) {
+    migrateItemAnalysisAddSubjectColumn_(legacy);
+    sheets.push(legacy);
+  }
   return sheets;
 }
 
@@ -834,6 +893,28 @@ function getSubjectByQuestionNo_(num, subjects, itemCounts) {
   return '';
 }
 
+function normalizeSubjectKey_(value) {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function resolveItemSubject_(itemRow, qNum, subjects, itemCounts) {
+  var sheetSubject = String((itemRow && itemRow[ITEM_COL.SUBJECT]) || '').trim();
+  if (sheetSubject) {
+    var list = Array.isArray(subjects) ? subjects : [];
+    var targetKey = normalizeSubjectKey_(sheetSubject);
+    if (targetKey && list.length > 0) {
+      for (var i = 0; i < list.length; i++) {
+        var subjectName = String(list[i] || '').trim();
+        if (normalizeSubjectKey_(subjectName) === targetKey) {
+          return subjectName;
+        }
+      }
+    }
+    return sheetSubject;
+  }
+  return getSubjectByQuestionNo_(qNum, subjects, itemCounts);
+}
+
 function toClientDateValue_(value) {
   if (!value) return '';
   if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
@@ -965,16 +1046,16 @@ function initializeSampleData(adminToken) {
   fireQSheet.clearContents();
   initSheet(policeQSheet, CONFIG.SHEET_QUESTIONS_POLICE);
   initSheet(fireQSheet, CONFIG.SHEET_QUESTIONS_FIRE);
-  policeQSheet.appendRow(['P2512', 1, '3', 2.5, 75.5, '상', '수사']);
-  policeQSheet.appendRow(['P2512', 2, '2', 2.5, 62.1, '중', '증거']);
-  policeQSheet.appendRow(['P2512', 3, '1', 2.5, 48.0, '상', '기초이론']);
-  policeQSheet.appendRow(['P2512', 4, '4', 2.5, 35.4, '상', '판례']);
-  policeQSheet.appendRow(['P2512', 5, '2', 2.5, 41.8, '중', '절차']);
-  fireQSheet.appendRow(['F2512', 1, '4', 3, 65.2, '하', '연소이론']);
-  fireQSheet.appendRow(['F2512', 2, '1', 3, 45.8, '상', '소화약제']);
-  fireQSheet.appendRow(['F2512', 3, '2', 3, 39.0, '상', '위험물']);
-  fireQSheet.appendRow(['F2512', 4, '3', 3, 58.3, '중', '법규']);
-  fireQSheet.appendRow(['F2512', 5, '4', 3, 31.6, '상', '행정']);
+  policeQSheet.appendRow(['P2512', 1, '형사법', '3', 2.5, 75.5, '상']);
+  policeQSheet.appendRow(['P2512', 2, '형사법', '2', 2.5, 62.1, '중']);
+  policeQSheet.appendRow(['P2512', 3, '경찰학', '1', 2.5, 48.0, '상']);
+  policeQSheet.appendRow(['P2512', 4, '경찰학', '4', 2.5, 35.4, '상']);
+  policeQSheet.appendRow(['P2512', 5, '헌법', '2', 2.5, 41.8, '중']);
+  fireQSheet.appendRow(['F2512', 1, '소방학', '4', 3, 65.2, '하']);
+  fireQSheet.appendRow(['F2512', 2, '소방학', '1', 3, 45.8, '상']);
+  fireQSheet.appendRow(['F2512', 3, '소방법규', '2', 3, 39.0, '상']);
+  fireQSheet.appendRow(['F2512', 4, '소방법규', '3', 3, 58.3, '중']);
+  fireQSheet.appendRow(['F2512', 5, '행정법', '4', 3, 31.6, '상']);
 
   return '더미 데이터 초기화 완료! 이제 앱을 테스트할 수 있습니다.';
 }
@@ -1516,7 +1597,7 @@ function getScoreAnalysis(examId, studentId) {
       if (String(itemRows[q][ITEM_COL.EXAM_ID]) !== String(examId)) continue;
       var qNum = Number(itemRows[q][ITEM_COL.NUM]) || 0;
       if (!qNum) continue;
-      var mappedSubject = getSubjectByQuestionNo_(qNum, exam.subjects, exam.subjectItemCounts);
+      var mappedSubject = resolveItemSubject_(itemRows[q], qNum, exam.subjects, exam.subjectItemCounts);
       if (!mappedSubject) continue;
       var point = Number(itemRows[q][ITEM_COL.POINTS]) || 0;
       if (point > 0) {
@@ -1755,7 +1836,7 @@ function getScoreAnalysis(examId, studentId) {
 
       itemAnalysis.push({
         num: num,
-        subject: getSubjectByQuestionNo_(num, exam.subjects, exam.subjectItemCounts),
+        subject: resolveItemSubject_(itemRows[m], num, exam.subjects, exam.subjectItemCounts),
         answer: answerText || '-',
         points: itemRows[m][ITEM_COL.POINTS],
         correctRate: Number(itemRows[m][ITEM_COL.CORRECT_RATE]) || 0,
@@ -1775,7 +1856,7 @@ function getScoreAnalysis(examId, studentId) {
         var correctCount = allScores.filter(function(s) { return s.items[n] === 'O'; }).length;
         itemAnalysis.push({
           num: n + 1,
-          subject: getSubjectByQuestionNo_(n + 1, exam.subjects, exam.subjectItemCounts),
+          subject: resolveItemSubject_(null, n + 1, exam.subjects, exam.subjectItemCounts),
           answer: '-',
           points: '-',
           correctRate: Number((correctCount / totalCount * 100).toFixed(1)),
