@@ -749,6 +749,101 @@ function inferFireTrack_(studentInfo, examInfo) {
   return 'fire_unknown';
 }
 
+function inferPoliceTrack_(studentInfo, examInfo) {
+  var sourceText = [
+    (studentInfo && studentInfo.examField) || '',
+    (studentInfo && studentInfo.examRank) || '',
+    (studentInfo && studentInfo.examSubject) || '',
+    (examInfo && examInfo.name) || '',
+    (examInfo && examInfo.subjects ? examInfo.subjects.join(' ') : '')
+  ].join(' ');
+
+  if (/경행|경찰행정|범죄학/.test(sourceText)) return 'police_admin_special';
+  return 'police_public';
+}
+
+function hasSubjectByRegex_(subjects, regex) {
+  if (!Array.isArray(subjects) || !regex) return false;
+  for (var i = 0; i < subjects.length; i++) {
+    var subject = normalizeSubjectKey_(subjects[i]);
+    if (!subject) continue;
+    if (regex.test(subject)) return true;
+  }
+  return false;
+}
+
+function inferExamTrackBySubjects_(studentType, examInfo) {
+  var type = String(studentType || '').trim();
+  var subjects = normalizeSubjectList_(examInfo && examInfo.subjects);
+  var sourceText = [
+    (examInfo && examInfo.name) || '',
+    subjects.join(' ')
+  ].join(' ');
+
+  if (type === '경찰') {
+    var hasCrime = hasSubjectByRegex_(subjects, /범죄학/);
+    var hasCriminal = hasSubjectByRegex_(subjects, /형사법|형법|형사소송법|형소법/);
+    var hasPolice = hasSubjectByRegex_(subjects, /경찰학|경찰/);
+    var hasConst = hasSubjectByRegex_(subjects, /헌법/);
+
+    if (hasCrime && hasCriminal && hasPolice) return 'police_admin_special';
+    if (hasConst && hasCriminal && hasPolice) return 'police_public';
+    if (/경행|경찰행정|범죄학/.test(sourceText)) return 'police_admin_special';
+    return 'police_unknown';
+  }
+
+  if (type === '소방') {
+    var hasAdminLaw = hasSubjectByRegex_(subjects, /행정법/);
+    var hasFireScience = hasSubjectByRegex_(subjects, /소방학/);
+    var hasFireLaw = hasSubjectByRegex_(subjects, /소방관계법규|소방법규|법규/);
+    var hasParamedic = hasSubjectByRegex_(subjects, /응급/);
+
+    if (hasParamedic && hasFireScience) return 'fire_paramedic_special';
+    if (hasAdminLaw && hasFireScience && hasFireLaw) return 'fire_public';
+    if (hasFireScience && hasFireLaw) return 'fire_special';
+
+    if (/구급/.test(sourceText)) return 'fire_paramedic_special';
+    if (/구조|학과|경채/.test(sourceText)) return 'fire_special';
+    if (/공채/.test(sourceText)) return 'fire_public';
+    return 'fire_unknown';
+  }
+
+  return 'unknown';
+}
+
+function inferStudentTrackByProfile_(studentInfo, studentType) {
+  var type = String(studentType || (studentInfo && studentInfo.type) || '').trim();
+  if (type === '경찰') return inferPoliceTrack_(studentInfo, null);
+  if (type === '소방') return inferFireTrack_(studentInfo, null);
+  return 'unknown';
+}
+
+function isExamEligibleForStudent_(studentInfo, examInfo) {
+  if (!studentInfo || !examInfo) return false;
+
+  var studentType = String(studentInfo.type || '').trim();
+  var examType = String(examInfo.type || '').trim();
+  if (studentType && examType && studentType !== examType) return false;
+
+  var studentTrack = inferStudentTrackByProfile_(studentInfo, studentType);
+  var examTrack = inferExamTrackBySubjects_(studentType, examInfo);
+
+  if (studentType === '경찰') {
+    if (studentTrack === 'police_admin_special') return examTrack === 'police_admin_special';
+    return examTrack === 'police_public';
+  }
+
+  if (studentType === '소방') {
+    if (studentTrack === 'fire_unknown') return examTrack !== 'fire_unknown';
+    if (studentTrack === 'fire_rescue_academic_special') {
+      return examTrack === 'fire_rescue_academic_special' || examTrack === 'fire_special';
+    }
+    return studentTrack === examTrack;
+  }
+
+  return true;
+}
+
 function resolveItemCountsBySubject_(subjects, track, fallbackCounts) {
   var list = Array.isArray(subjects) ? subjects : [];
   var fallback = Array.isArray(fallbackCounts) ? fallbackCounts : [];
@@ -760,6 +855,10 @@ function resolveItemCountsBySubject_(subjects, track, fallbackCounts) {
 
     if (track === 'police') {
       if (name.indexOf('헌법') >= 0) mapped = 20;
+      else if (name.indexOf('형사') >= 0) mapped = 40;
+      else if (name.indexOf('경찰학') >= 0 || name.indexOf('경찰') >= 0) mapped = 40;
+    } else if (track === 'police_admin_special') {
+      if (name.indexOf('범죄학') >= 0) mapped = 20;
       else if (name.indexOf('형사') >= 0) mapped = 40;
       else if (name.indexOf('경찰학') >= 0 || name.indexOf('경찰') >= 0) mapped = 40;
     } else if (track === 'fire_public') {
@@ -791,11 +890,18 @@ function getExamStructure_(studentInfo, examInfo) {
   var existingSubjects = normalizeSubjectList_(examInfo && examInfo.subjects);
 
   if (studentType === '경찰') {
-    var policeDefaults = ['헌법', '형사법', '경찰학'];
+    var policeTrack = inferPoliceTrack_(studentInfo, examInfo);
+    var policeDefaults = policeTrack === 'police_admin_special'
+      ? ['범죄학', '형사법', '경찰학']
+      : ['헌법', '형사법', '경찰학'];
     var policeSubjects = mergeSubjects_(existingSubjects, policeDefaults, 3);
-    var policeCounts = resolveItemCountsBySubject_(policeSubjects, 'police', [20, 40, 40]);
+    var policeCounts = resolveItemCountsBySubject_(
+      policeSubjects,
+      policeTrack === 'police_admin_special' ? 'police_admin_special' : 'police',
+      [20, 40, 40]
+    );
     return {
-      track: 'police',
+      track: policeTrack,
       subjects: policeSubjects,
       itemCounts: policeCounts,
       totalItems: totalItemsFromCounts_(policeCounts, 100)
@@ -1330,6 +1436,29 @@ function getExamList(studentType) {
   }
 }
 
+function findStudentByIdAndType_(studentId, preferredType) {
+  var sid = String(studentId || '').trim();
+  var type = String(preferredType || '').trim();
+  if (!sid) return null;
+
+  var sheets = [];
+  if (type === '경찰') sheets.push(getSheet(CONFIG.SHEET_STUDENTS_POLICE));
+  else if (type === '소방') sheets.push(getSheet(CONFIG.SHEET_STUDENTS_FIRE));
+  else {
+    sheets.push(getSheet(CONFIG.SHEET_STUDENTS_POLICE));
+    sheets.push(getSheet(CONFIG.SHEET_STUDENTS_FIRE));
+  }
+
+  for (var s = 0; s < sheets.length; s++) {
+    var records = getStudentRecords_(sheets[s]);
+    for (var i = 0; i < records.length; i++) {
+      if (String(records[i].studentId || '').trim() === sid) return records[i];
+    }
+  }
+
+  return null;
+}
+
 function getMyExamAccess(studentId, studentType) {
   try {
     var sid = String(studentId || '').trim();
@@ -1338,25 +1467,11 @@ function getMyExamAccess(studentId, studentType) {
       return { success: false, message: '수험번호가 필요합니다.' };
     }
 
-    // 직렬 값이 비어 전달된 경우 수험번호 기준으로 직렬을 보정한다.
-    if (!sType) {
-      var policeRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_POLICE));
-      for (var p = 0; p < policeRecords.length; p++) {
-        if (String(policeRecords[p].studentId || '').trim() === sid) {
-          sType = String(policeRecords[p].type || '').trim();
-          break;
-        }
-      }
-      if (!sType) {
-        var fireRecords = getStudentRecords_(getSheet(CONFIG.SHEET_STUDENTS_FIRE));
-        for (var f = 0; f < fireRecords.length; f++) {
-          if (String(fireRecords[f].studentId || '').trim() === sid) {
-            sType = String(fireRecords[f].type || '').trim();
-            break;
-          }
-        }
-      }
+    var student = findStudentByIdAndType_(sid, sType);
+    if (!student) {
+      return { success: false, message: '학생 정보를 찾을 수 없습니다.' };
     }
+    sType = String(student.type || sType).trim();
 
     var examSheet = getSheet(CONFIG.SHEET_EXAM);
     var examRows = examSheet.getDataRange().getValues();
@@ -1382,12 +1497,14 @@ function getMyExamAccess(studentId, studentType) {
         id: examId,
         name: String(row[EXAM_COL.NAME] || examId),
         date: toClientDateValue_(row[EXAM_COL.DATE]),
+        type: examType,
         examType: examType,
         subjects: subjects,
         hasScore: false,
         canPrint: true,
         canAnalyze: false
       };
+      if (!isExamEligibleForStudent_(student, examInfo)) continue;
       list.push(examInfo);
       examMap[examId] = examInfo;
     }
@@ -1420,6 +1537,7 @@ function getMyExamAccess(studentId, studentType) {
 
       var fallbackType = inferExamType_(examId, '');
       if (sType && fallbackType && fallbackType !== sType) return;
+      if (!isExamEligibleForStudent_(student, { id: examId, name: examId, subjects: [], type: fallbackType })) return;
       list.push({
         id: examId,
         name: examId + ' (마스터 정보 없음)',
@@ -1453,6 +1571,12 @@ function getStudentExamList(studentId, studentType) {
     if (!sid) {
       return { success: false, message: '수험번호가 필요합니다.' };
     }
+
+    var student = findStudentByIdAndType_(sid, sType);
+    if (!student) {
+      return { success: false, message: '학생 정보를 찾을 수 없습니다.' };
+    }
+    sType = String(student.type || sType).trim();
 
     var myExamMap = {};
     var scoreSheets = getScoreSheetsForType_(sType);
@@ -1493,6 +1617,17 @@ function getStudentExamList(studentId, studentType) {
 
       var eType = inferExamType_(eId, row[EXAM_COL.S1]);
       if (sType && eType && eType !== sType) continue;
+      var examInfo = {
+        id: eId,
+        name: String(row[EXAM_COL.NAME] || eId),
+        subjects: [
+          String(row[EXAM_COL.S1] || '').trim(),
+          String(row[EXAM_COL.S2] || '').trim(),
+          String(row[EXAM_COL.S3] || '').trim()
+        ],
+        type: eType
+      };
+      if (!isExamEligibleForStudent_(student, examInfo)) continue;
 
       list.push({
         id: eId,
@@ -1509,6 +1644,7 @@ function getStudentExamList(studentId, studentType) {
       if (foundMap[missingId]) continue;
       var missingType = inferExamType_(missingId, '');
       if (sType && missingType && missingType !== sType) continue;
+      if (!isExamEligibleForStudent_(student, { id: missingId, name: missingId, subjects: [], type: missingType })) continue;
       list.push({
         id: missingId,
         name: missingId + ' (마스터 정보 없음)',
@@ -1576,6 +1712,9 @@ function getScoreAnalysis(examId, studentId) {
     if (!exam) return { success: false, message: '시험 정보를 찾을 수 없습니다.' };
     if (student.type && exam.type && student.type !== exam.type) {
       return { success: false, message: '선택한 시험은 해당 직렬의 시험이 아닙니다.' };
+    }
+    if (!isExamEligibleForStudent_(student, exam)) {
+      return { success: false, message: '선택한 시험은 응시분야와 일치하지 않습니다. 본인 응시분야 시험만 확인할 수 있습니다.' };
     }
     var analysisType = exam.type || student.type || '';
     var examStructure = getExamStructure_(student, exam);

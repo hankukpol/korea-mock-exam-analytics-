@@ -32,6 +32,13 @@
                     <input type="text" id="userName" class="form-input" placeholder="본인 이름을 입력하세요" autocomplete="off">
                 </div>
 
+                <div class="remember-row">
+                    <label for="rememberStudentId">
+                        <input type="checkbox" id="rememberStudentId">
+                        수험번호만 기억
+                    </label>
+                </div>
+
                 <div class="form-group">
                     <label>직렬 선택</label>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
@@ -469,6 +476,7 @@
         var admitOnlyMode = false;
         var loginStage = 'credentials'; // credentials | exam
         var examLoadVersion = 0;
+        var REMEMBER_STUDENT_ID_KEY = 'mock_exam_remembered_student_id_v1';
 
         function getSelectedType() {
             var selected = document.querySelector('input[name="examType"]:checked');
@@ -479,6 +487,60 @@
             var type = getSelectedType();
             document.getElementById('typePolice').classList.toggle('active', type === '경찰');
             document.getElementById('typeFire').classList.toggle('active', type === '소방');
+        }
+
+        function getRememberStudentIdInput() {
+            return document.getElementById('rememberStudentId');
+        }
+
+        function clearRememberedStudentId() {
+            try {
+                if (window.localStorage) localStorage.removeItem(REMEMBER_STUDENT_ID_KEY);
+            } catch (e) {
+                console.warn('수험번호 저장값 제거 실패', e);
+            }
+        }
+
+        function saveRememberedStudentId(studentId) {
+            var checkbox = getRememberStudentIdInput();
+            var shouldRemember = !!(checkbox && checkbox.checked);
+
+            if (!shouldRemember) {
+                clearRememberedStudentId();
+                return;
+            }
+
+            try {
+                if (window.localStorage) {
+                    localStorage.setItem(REMEMBER_STUDENT_ID_KEY, String(studentId || '').trim());
+                }
+            } catch (e) {
+                console.warn('수험번호 저장 실패', e);
+            }
+        }
+
+        function loadRememberedStudentId() {
+            var idInput = document.getElementById('studentId');
+            var nameInput = document.getElementById('userName');
+            var checkbox = getRememberStudentIdInput();
+            if (!idInput || !checkbox) return;
+
+            var remembered = '';
+            try {
+                if (window.localStorage) remembered = localStorage.getItem(REMEMBER_STUDENT_ID_KEY) || '';
+            } catch (e) {
+                remembered = '';
+            }
+
+            idInput.value = remembered ? String(remembered).trim() : '';
+            if (nameInput) nameInput.value = '';
+            checkbox.checked = !!remembered;
+        }
+
+        function handleRememberStudentIdChange() {
+            var checkbox = getRememberStudentIdInput();
+            if (!checkbox || checkbox.checked) return;
+            clearRememberedStudentId();
         }
 
         function selectType(type) {
@@ -747,6 +809,7 @@
             google.script.run
                 .withSuccessHandler(function (loginResult) {
                     if (loginResult.success) {
+                        saveRememberedStudentId(studentId);
                         btn.disabled = false;
                         btn.innerHTML = '확인';
                         openExamSelect(loginResult.data, true);
@@ -2201,6 +2264,8 @@
             updateTypeUI();
             document.getElementById('studentId').addEventListener('input', collapseInlineExamIfCredentialChanged);
             document.getElementById('userName').addEventListener('input', collapseInlineExamIfCredentialChanged);
+            document.getElementById('rememberStudentId').addEventListener('change', handleRememberStudentIdChange);
+            loadRememberedStudentId();
         });
 
         window.addEventListener('afterprint', function () {
@@ -2250,6 +2315,7 @@
             document.getElementById('loginBtn').innerHTML = '확인';
             document.getElementById('loginMessage').className = 'message';
             document.getElementById('loginMessage').style.display = 'none';
+            loadRememberedStudentId();
         }
 
         function showMessage(el, msg, type) {
