@@ -253,6 +253,7 @@
                             <tbody id="rankingTableBody"></tbody>
                         </table>
                     </div>
+                    <div id="rankingPagination" class="pagination-wrap"></div>
                 </div>
             </div>
 
@@ -314,6 +315,7 @@
                             <tbody id="itemScoreTableBody"></tbody>
                         </table>
                     </div>
+                    <div id="itemScorePagination" class="pagination-wrap"></div>
                 </div>
 
                 <div class="analysis-2col">
@@ -412,6 +414,17 @@
                     <h3>지역/전체 비교 차트</h3>
                     <canvas id="regionalCompareChart"></canvas>
                 </div>
+                <div class="glass-card">
+                    <h3 id="regionalRankingTitle">지역 응시자 석차 현황</h3>
+                    <p class="analysis-note" id="regionalRankingNote">내 응시지역 응시자만 표시됩니다.</p>
+                    <div class="data-table-wrap">
+                        <table class="data-table">
+                            <thead id="regionalRankingTableHeader"></thead>
+                            <tbody id="regionalRankingTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="regionalRankingPagination" class="pagination-wrap"></div>
+                </div>
             </div>
 
             <div id="analysisPanelDistribution" class="analysis-panel">
@@ -472,6 +485,11 @@
         var currentUser = null;
         var selectedItemSubjectIdx = -1; // -1: 전체
         var selectedKillerSubjectIdx = -1; // -1: 전체
+        var cachedRegionalList = []; // 지역 석차 모달용 캐시
+        var PAGE_SIZE = 20;
+        var rankingPage = 1;
+        var regionalRankingPage = 1;
+        var itemScorePage = 1;
         var myExamAccessMap = {};
         var admitOnlyMode = false;
         var loginStage = 'credentials'; // credentials | exam
@@ -1175,6 +1193,9 @@
             if (!data || !data.student || !data.exam) {
                 throw new Error('필수 분석 데이터가 누락되었습니다.');
             }
+            rankingPage = 1;
+            regionalRankingPage = 1;
+            itemScorePage = 1;
             setAdmitOnlyMode(false);
             document.getElementById('loginSection').style.display = 'none';
             document.getElementById('dashboardSection').style.display = 'block';
@@ -1365,12 +1386,19 @@
             if (body) {
                 if (items.length === 0) {
                     body.innerHTML = '<tr><td colspan="7" class="empty-cell">해당 과목의 문항 데이터가 없습니다.</td></tr>';
+                    renderPaginationUI(document.getElementById('itemScorePagination'), 1, 1, 'goItemScorePage');
                 } else {
-                    body.innerHTML = items.map(function (q) {
+                    var totalPages = Math.ceil(items.length / PAGE_SIZE);
+                    if (itemScorePage > totalPages) itemScorePage = totalPages;
+                    if (itemScorePage < 1) itemScorePage = 1;
+                    var startIdx = (itemScorePage - 1) * PAGE_SIZE;
+                    var pageItems = items.slice(startIdx, startIdx + PAGE_SIZE);
+
+                    body.innerHTML = pageItems.map(function (q) {
                         var studentAnswer = q.studentAnswer || (q.my === 'O' ? q.answer : (q.my === 'X' ? '오답' : '-'));
                         var sName = getItemSubjectName(q, data);
                         return '<tr>'
-                            + '<td>' + escapeHtml(q.num) + '</td>'
+                            + '<td>' + getSubjectLocalNum(q, data) + '</td>'
                             + '<td>' + escapeHtml(sName) + '</td>'
                             + '<td>' + escapeHtml(q.answer) + '</td>'
                             + '<td>' + escapeHtml(studentAnswer) + '</td>'
@@ -1379,6 +1407,7 @@
                             + '<td>' + escapeHtml(q.difficulty || '-') + '</td>'
                             + '</tr>';
                     }).join('');
+                    renderPaginationUI(document.getElementById('itemScorePagination'), itemScorePage, totalPages, 'goItemScorePage');
                 }
             }
 
@@ -1408,7 +1437,7 @@
                 } else {
                     easyMissedBody.innerHTML = easyMissed.map(function (q) {
                         return '<tr>'
-                            + '<td>' + escapeHtml(q.num) + '</td>'
+                            + '<td>' + getSubjectLocalNum(q, data) + ' (' + escapeHtml(getItemSubjectName(q, data)) + ')</td>'
                             + '<td>' + fmtPct(q.correctRate) + '</td>'
                             + '</tr>';
                     }).join('');
@@ -1423,29 +1452,55 @@
             var subjects = (data.exam && data.exam.subjects) || [];
             renderSubjectFilterButtons('killerSubjectFilters', subjects, selectedKillerSubjectIdx, 'switchKillerSubject');
 
-            var allKillers = data.killerQuestions || [];
-            var killerQuestions = allKillers;
-
-            if (selectedKillerSubjectIdx !== -1) {
-                var sName = subjects[selectedKillerSubjectIdx];
-                killerQuestions = allKillers.filter(function (q) {
-                    return isItemInSubject(q, sName, selectedKillerSubjectIdx, data);
-                });
-            }
-
+            var allItems = (data.itemAnalysis || []).slice();
             var killerBody = document.getElementById('killerTableBody');
-            if (killerBody) {
-                if (killerQuestions.length === 0) {
-                    killerBody.innerHTML = '<tr><td colspan="6" class="empty-cell">해당 과목의 오답 데이터가 없습니다.</td></tr>';
-                } else {
-                    killerBody.innerHTML = killerQuestions.map(function (q, idx) {
+            if (!killerBody) return;
+
+            if (selectedKillerSubjectIdx === -1) {
+                // 전체: 과목 순서대로 각 과목별 TOP 5
+                var html = '';
+                var globalIdx = 0;
+                subjects.forEach(function (sName, sIdx) {
+                    var subjectItems = allItems.filter(function (q) {
+                        return isItemInSubject(q, sName, sIdx, data);
+                    });
+                    subjectItems.sort(function (a, b) { return numberOrZero(a.correctRate) - numberOrZero(b.correctRate); });
+                    var top5 = subjectItems.slice(0, 5);
+                    if (top5.length === 0) return;
+                    html += '<tr class="killer-subject-header"><td colspan="6" style="background:#f1f3f5; font-weight:700; color:var(--text-dark); padding:10px 12px;">' + escapeHtml(sName) + ' 오답률 TOP 5</td></tr>';
+                    top5.forEach(function (q, idx) {
                         var mine = q.my === 'O' ? 'O' : (q.my === 'X' ? 'X' : '-');
                         var wrongRate = numberOrZero(100 - numberOrZero(q.correctRate));
-                        var sName = getItemSubjectName(q, data);
+                        html += '<tr>'
+                            + '<td>' + (idx + 1) + '</td>'
+                            + '<td>' + getSubjectLocalNum(q, data) + '</td>'
+                            + '<td>' + escapeHtml(getItemSubjectName(q, data)) + '</td>'
+                            + '<td>' + fmtPct(q.correctRate) + '</td>'
+                            + '<td>' + fmtPct(wrongRate) + '</td>'
+                            + '<td>' + mine + '</td>'
+                            + '</tr>';
+                    });
+                });
+                killerBody.innerHTML = html || '<tr><td colspan="6" class="empty-cell">오답 데이터가 없습니다.</td></tr>';
+            } else {
+                // 특정 과목: 해당 과목 TOP 5
+                var sName = subjects[selectedKillerSubjectIdx];
+                var subjectItems = allItems.filter(function (q) {
+                    return isItemInSubject(q, sName, selectedKillerSubjectIdx, data);
+                });
+                subjectItems.sort(function (a, b) { return numberOrZero(a.correctRate) - numberOrZero(b.correctRate); });
+                var top5 = subjectItems.slice(0, 5);
+
+                if (top5.length === 0) {
+                    killerBody.innerHTML = '<tr><td colspan="6" class="empty-cell">해당 과목의 오답 데이터가 없습니다.</td></tr>';
+                } else {
+                    killerBody.innerHTML = top5.map(function (q, idx) {
+                        var mine = q.my === 'O' ? 'O' : (q.my === 'X' ? 'X' : '-');
+                        var wrongRate = numberOrZero(100 - numberOrZero(q.correctRate));
                         return '<tr>'
                             + '<td>' + (idx + 1) + '</td>'
-                            + '<td>' + escapeHtml(q.num) + '</td>'
-                            + '<td>' + escapeHtml(sName) + '</td>'
+                            + '<td>' + getSubjectLocalNum(q, data) + '</td>'
+                            + '<td>' + escapeHtml(getItemSubjectName(q, data)) + '</td>'
                             + '<td>' + fmtPct(q.correctRate) + '</td>'
                             + '<td>' + fmtPct(wrongRate) + '</td>'
                             + '<td>' + mine + '</td>'
@@ -1453,7 +1508,6 @@
                     }).join('');
                 }
             }
-
         }
 
         function renderRegionalPanel(data) {
@@ -1471,6 +1525,83 @@
                     + '</tr>';
             }
             renderRegionalCompareChart(data);
+            renderRegionalRanking(data);
+        }
+
+        function renderRegionalRanking(data) {
+            var head = document.getElementById('regionalRankingTableHeader');
+            var body = document.getElementById('regionalRankingTableBody');
+            var title = document.getElementById('regionalRankingTitle');
+            var note = document.getElementById('regionalRankingNote');
+            if (!head || !body) return;
+
+            var myRegion = (data.student && data.student.region) || '';
+            var subjects = (data.exam && data.exam.subjects) || [];
+            var allRanking = data.overallRanking || [];
+
+            if (title) title.textContent = (myRegion || '미지정') + ' 지역 응시자 석차 현황';
+            if (note) note.textContent = myRegion ? (myRegion + ' 지역 응시자만 표시됩니다.') : '지역이 설정되지 않았습니다.';
+
+            // 같은 지역 응시자만 필터
+            var regionalList = allRanking.filter(function (r) {
+                return r.region && r.region !== '-' && r.region === myRegion;
+            });
+            cachedRegionalList = regionalList;
+
+            // 지역 내 석차 재계산 (총점 내림차순)
+            regionalList.sort(function (a, b) { return numberOrZero(b.total) - numberOrZero(a.total); });
+            var regionalRank = 1;
+            for (var i = 0; i < regionalList.length; i++) {
+                if (i > 0 && numberOrZero(regionalList[i].total) < numberOrZero(regionalList[i - 1].total)) {
+                    regionalRank = i + 1;
+                }
+                regionalList[i]._regionalRank = regionalRank;
+            }
+
+            // 헤더
+            var headerHtml = '<tr><th>지역석차</th><th>수험번호</th>';
+            subjects.forEach(function (s) {
+                headerHtml += '<th>' + escapeHtml(s) + '</th>';
+            });
+            headerHtml += '<th>총점</th><th>전체석차</th></tr>';
+            head.innerHTML = headerHtml;
+
+            if (!regionalList.length) {
+                body.innerHTML = '<tr><td colspan="' + (4 + subjects.length) + '">해당 지역 응시자 데이터가 없습니다.</td></tr>';
+                renderPaginationUI(document.getElementById('regionalRankingPagination'), 1, 1, 'goRegionalRankingPage');
+                return;
+            }
+
+            var totalPages = Math.ceil(regionalList.length / PAGE_SIZE);
+            if (regionalRankingPage > totalPages) regionalRankingPage = totalPages;
+            if (regionalRankingPage < 1) regionalRankingPage = 1;
+            var startIdx = (regionalRankingPage - 1) * PAGE_SIZE;
+            var pageList = regionalList.slice(startIdx, startIdx + PAGE_SIZE);
+
+            body.innerHTML = pageList.map(function (row, i) {
+                var globalIdx = startIdx + i;
+                var isMe = row.isMe;
+                var rowStyle = isMe ? ' style="background-color:rgba(52,152,219,0.1); font-weight:700;"' : '';
+                var html = '<tr' + rowStyle + '>'
+                    + '<td>' + row._regionalRank + '</td>'
+                    + '<td><a href="javascript:void(0)" onclick="openRankingModal(\'regional\',' + globalIdx + ')" style="color:var(--primary-color); font-weight:700; text-decoration:underline; cursor:pointer;">' + escapeHtml(row.studentIdMasked) + '</a></td>';
+                html += '<td>' + fmt1(row.s1) + '</td>';
+                html += '<td>' + fmt1(row.s2) + '</td>';
+                if (subjects.length >= 3) {
+                    html += '<td>' + fmt1(row.s3) + '</td>';
+                }
+                html += '<td style="color:var(--primary-color); font-weight:700;">' + fmt1(row.total) + '</td>';
+                html += '<td>' + row.rank + '</td>';
+                html += '</tr>';
+                return html;
+            }).join('');
+
+            renderPaginationUI(document.getElementById('regionalRankingPagination'), regionalRankingPage, totalPages, 'goRegionalRankingPage');
+        }
+
+        function goRegionalRankingPage(page) {
+            regionalRankingPage = page;
+            if (currentData) renderRegionalRanking(currentData);
         }
 
         function renderCompetitorPanel(data) {
@@ -1530,6 +1661,106 @@
             if (event && event.target && event.target.id === 'competitorModal') {
                 closeCompetitorModal();
             }
+        }
+
+        // 석차 현황 테이블에서 수험번호 클릭 시 모달
+        var _rankingModalSource = null; // { type: 'overall'|'regional', index: number }
+        function openRankingModal(type, index) {
+            var row = null;
+            if (type === 'overall') {
+                var list = (currentData && currentData.overallRanking) || [];
+                row = list[index];
+            } else {
+                row = cachedRegionalList[index];
+            }
+            if (!row) return;
+
+            var infoBox = document.getElementById('modalCompetitorInfo');
+            if (infoBox) {
+                infoBox.innerHTML = '응시자: <strong>' + escapeHtml(row.studentIdMasked) + '</strong> | 총점: <strong>' + fmt1(row.total) + '점</strong> | 석차: <strong>' + row.rank + '등</strong>';
+            }
+
+            _rankingModalSource = { type: type, index: index };
+
+            var btnRow = document.getElementById('modalSubjectButtons');
+            var subjects = (currentData.exam && Array.isArray(currentData.exam.subjects))
+                ? currentData.exam.subjects.filter(function (s) { return !!String(s || '').trim(); })
+                : [];
+            if (!subjects.length) subjects = ['전체'];
+            if (btnRow) {
+                btnRow.innerHTML = subjects.map(function (sName, sIdx) {
+                    return '<button class="modal-tab-btn' + (sIdx === 0 ? ' active' : '') + '" onclick="renderRankingModalContent(' + sIdx + ')">' + escapeHtml(sName) + '</button>';
+                }).join('');
+            }
+
+            document.getElementById('competitorModal').style.display = 'flex';
+            renderRankingModalContent(0);
+        }
+
+        function renderRankingModalContent(subjectIdx) {
+            if (!_rankingModalSource || !currentData) return;
+            var row = null;
+            if (_rankingModalSource.type === 'overall') {
+                row = (currentData.overallRanking || [])[_rankingModalSource.index];
+            } else {
+                row = cachedRegionalList[_rankingModalSource.index];
+            }
+            if (!row) return;
+
+            var subjects = (currentData.exam && Array.isArray(currentData.exam.subjects))
+                ? currentData.exam.subjects.filter(function (s) { return !!String(s || '').trim(); })
+                : [];
+            if (!subjects.length) subjects = ['전체'];
+            if (subjectIdx < 0 || subjectIdx >= subjects.length) subjectIdx = 0;
+
+            var btns = document.querySelectorAll('.modal-tab-btn');
+            btns.forEach(function (btn, i) { btn.classList.toggle('active', i === subjectIdx); });
+
+            var tbody = document.getElementById('modalDetailTableBody');
+            if (!tbody) return;
+
+            var itemAnalysis = (currentData.itemAnalysis || []).slice().sort(function (a, b) {
+                return numberOrZero(a.num) - numberOrZero(b.num);
+            });
+
+            // 과목별 필터
+            var subjectItems = itemAnalysis;
+            if (subjects.length > 1) {
+                var subjectName = String(subjects[subjectIdx] || '').trim();
+                subjectItems = itemAnalysis.filter(function (q) {
+                    return isItemInSubject(q, subjectName, subjectIdx, currentData);
+                });
+            }
+
+            if (!subjectItems.length) {
+                tbody.innerHTML = '<tr><td colspan="4">해당 과목 문항 데이터가 없습니다.</td></tr>';
+                return;
+            }
+
+            var items = Array.isArray(row.items) ? row.items : [];
+            tbody.innerHTML = subjectItems.map(function (q) {
+                var raw = (items[q.num - 1]) ? String(items[q.num - 1]).trim() : '-';
+                var rawUpper = raw.toUpperCase();
+                var answer = String(q.answer || '-').trim();
+                var answerUpper = answer.toUpperCase();
+                var result = '-';
+                if (rawUpper === 'O' || rawUpper === 'X') {
+                    result = rawUpper;
+                } else if (raw && raw !== '-' && answer && answer !== '-') {
+                    result = (rawUpper === answerUpper) ? 'O' : 'X';
+                }
+                var inputAnswer = '-';
+                if (rawUpper === 'O') inputAnswer = (answer && answer !== '-') ? answer : 'O';
+                else if (rawUpper === 'X') inputAnswer = '오답(X)';
+                else inputAnswer = raw || '-';
+
+                return '<tr>'
+                    + '<td>' + getSubjectLocalNum(q, currentData) + '</td>'
+                    + '<td>' + escapeHtml(inputAnswer) + '</td>'
+                    + '<td>' + escapeHtml(answer || '-') + '</td>'
+                    + '<td><span style="color:' + (result === 'O' ? '#2b8a3e' : (result === 'X' ? '#e03131' : '#868e96')) + '; font-weight:bold;">' + escapeHtml(result) + '</span></td>'
+                    + '</tr>';
+            }).join('');
         }
 
         function renderCompetitorDetailContent(compIndex, subjectIdx) {
@@ -1611,7 +1842,7 @@
                 else inputAnswer = raw || '-';
 
                 return '<tr>'
-                    + '<td>' + escapeHtml(q.num) + '</td>'
+                    + '<td>' + getSubjectLocalNum(q, currentData) + '</td>'
                     + '<td>' + escapeHtml(inputAnswer) + '</td>'
                     + '<td>' + escapeHtml(answer || '-') + '</td>'
                     + '<td><span style="color:' + (result === 'O' ? '#2b8a3e' : (result === 'X' ? '#e03131' : '#868e96')) + '; font-weight:bold;">' + escapeHtml(result) + '</span></td>'
@@ -1625,47 +1856,21 @@
             for (var i = 0; i < bins.length; i++) {
                 var low = numberOrZero(bins[i].threshold);
                 var high = numberOrZero(bins[i].upper);
-                if (high < low) {
-                    var tmp = low;
-                    low = high;
-                    high = tmp;
-                }
-                if (score >= low && score <= high) return i;
+                if (score >= low && score < high) return i;
+                // 마지막 구간은 상한 포함
+                if (i === bins.length - 1 && score >= low && score <= high) return i;
             }
-
-            var closestIdx = -1;
-            var closestDist = Number.POSITIVE_INFINITY;
-            for (var i = 0; i < bins.length; i++) {
-                var low = numberOrZero(bins[i].threshold);
-                var high = numberOrZero(bins[i].upper);
-                var mid = (low + high) / 2;
-                var dist = Math.abs(score - mid);
-                if (dist < closestDist) {
-                    closestDist = dist;
-                    closestIdx = i;
-                }
-            }
-            return closestIdx;
+            return bins.length - 1;
         }
 
         function getDistributionBandLabel_(bin, idx) {
             if (!bin) return '-';
-            if (bin.bandLabel) return String(bin.bandLabel);
-            if (bin.shortLabel) return String(bin.shortLabel);
-            return String((idx + 1)) + '등급';
+            return numberOrZero(bin.threshold) + '~' + numberOrZero(bin.upper) + '점';
         }
 
         function getDistributionRangeLabel_(bin, idx, bins) {
             if (!bin) return '-';
-            var lower = numberOrZero(bin.threshold);
-            var upper = numberOrZero(bin.upper);
-            if (upper < lower) {
-                var temp = lower;
-                lower = upper;
-                upper = temp;
-            }
-            if (lower === upper) return lower + '점';
-            return lower + '~' + upper + '점';
+            return numberOrZero(bin.threshold) + '~' + numberOrZero(bin.upper) + '점';
         }
 
         function renderDistributionPanel(data) {
@@ -1681,11 +1886,10 @@
                     metaEl.innerHTML = '<span class="distribution-pill"><strong>분포 데이터 없음</strong></span>';
                 } else {
                     var myRange = myBinIdx >= 0 ? getDistributionRangeLabel_(bins[myBinIdx], myBinIdx, bins) : '-';
-                    var myBand = myBinIdx >= 0 ? getDistributionBandLabel_(bins[myBinIdx], myBinIdx) : '-';
+                    var binSize = (dist.binSize || 25) + '점';
                     var chips = [
                         { k: '응시자', v: (data.ranks && data.ranks.totalCount != null) ? numberOrZero(data.ranks.totalCount) + '명' : '-' },
-                        { k: '분포 방식', v: '10등급' },
-                        { k: '내 등급', v: myBand },
+                        { k: '분포 방식', v: '점수 구간 (' + binSize + ' 단위)' },
                         { k: '내 점수 구간', v: myRange }
                     ];
                     metaEl.innerHTML = chips.map(function (chip) {
@@ -1697,6 +1901,22 @@
             renderDistributionChart(bins, myBinIdx);
         }
 
+        // 공통 페이지네이션 UI 렌더
+        function renderPaginationUI(containerEl, currentPage, totalPages, onPageFn) {
+            if (!containerEl) return;
+            if (totalPages <= 1) { containerEl.innerHTML = ''; return; }
+            var html = '<button' + (currentPage <= 1 ? ' disabled' : '') + ' onclick="' + onPageFn + '(' + (currentPage - 1) + ')">&#60;</button>';
+            var startPage = Math.max(1, currentPage - 2);
+            var endPage = Math.min(totalPages, startPage + 4);
+            if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
+            for (var p = startPage; p <= endPage; p++) {
+                html += '<button class="' + (p === currentPage ? 'active' : '') + '" onclick="' + onPageFn + '(' + p + ')">' + p + '</button>';
+            }
+            html += '<button' + (currentPage >= totalPages ? ' disabled' : '') + ' onclick="' + onPageFn + '(' + (currentPage + 1) + ')">&#62;</button>';
+            html += '<span class="page-info">' + currentPage + ' / ' + totalPages + '</span>';
+            containerEl.innerHTML = html;
+        }
+
         function renderRankingPanel(data) {
             var list = data.overallRanking || [];
             var subjects = (data.exam && data.exam.subjects) || [];
@@ -1704,32 +1924,34 @@
             var body = document.getElementById('rankingTableBody');
             if (!head || !body) return;
 
-            // 헤더 동적 생성 (요구사항 순서: 수험번호 / 이름 / 응시지역 / 과목별 점수 / 석차)
             var headerHtml = '<tr>'
                 + '<th>수험번호</th>'
                 + '<th>응시지역</th>';
-
             subjects.forEach(function (s) {
                 headerHtml += '<th>' + escapeHtml(s) + '</th>';
             });
-
-            headerHtml += '<th>총점</th>';
-            headerHtml += '<th>석차</th>';
-            headerHtml += '</tr>';
+            headerHtml += '<th>총점</th><th>석차</th></tr>';
             head.innerHTML = headerHtml;
 
-            // 데이터 행 생성
             if (!list.length) {
                 body.innerHTML = '<tr><td colspan="' + (4 + subjects.length) + '">데이터가 없습니다.</td></tr>';
+                renderPaginationUI(document.getElementById('rankingPagination'), 1, 1, 'goRankingPage');
                 return;
             }
 
-            body.innerHTML = list.map(function (row) {
+            var totalPages = Math.ceil(list.length / PAGE_SIZE);
+            if (rankingPage > totalPages) rankingPage = totalPages;
+            if (rankingPage < 1) rankingPage = 1;
+            var startIdx = (rankingPage - 1) * PAGE_SIZE;
+            var pageList = list.slice(startIdx, startIdx + PAGE_SIZE);
+
+            body.innerHTML = pageList.map(function (row, i) {
+                var globalIdx = startIdx + i;
                 var isMe = row.isMe;
                 var rowClass = isMe ? ' style="background-color:rgba(52,152,219,0.1); font-weight:700;"' : '';
 
                 var html = '<tr' + rowClass + '>'
-                    + '<td>' + escapeHtml(row.studentIdMasked) + '</td>'
+                    + '<td><a href="javascript:void(0)" onclick="openRankingModal(\'overall\',' + globalIdx + ')" style="color:var(--primary-color); font-weight:700; text-decoration:underline; cursor:pointer;">' + escapeHtml(row.studentIdMasked) + '</a></td>'
                     + '<td>' + escapeHtml(row.region || '미지정') + '</td>';
 
                 html += '<td>' + fmt1(row.s1) + '</td>';
@@ -1737,12 +1959,17 @@
                 if (subjects.length >= 3) {
                     html += '<td>' + fmt1(row.s3) + '</td>';
                 }
-
                 html += '<td style="color:var(--primary-color); font-weight:700;">' + fmt1(row.total) + '</td>';
-                html += '<td>' + row.rank + '</td>';
-                html += '</tr>';
+                html += '<td>' + row.rank + '</td></tr>';
                 return html;
             }).join('');
+
+            renderPaginationUI(document.getElementById('rankingPagination'), rankingPage, totalPages, 'goRankingPage');
+        }
+
+        function goRankingPage(page) {
+            rankingPage = page;
+            if (currentData) renderRankingPanel(currentData);
         }
 
         function renderSubjectPercentileChart(data) {
@@ -2058,8 +2285,8 @@
             var myBinIdx = (precomputedMyBinIdx != null && precomputedMyBinIdx >= 0)
                 ? precomputedMyBinIdx
                 : findDistributionBinIndex_(bins, myTotal);
-            var labels = bins.map(function (b, idx) {
-                return b.shortLabel ? String(b.shortLabel) : String(idx + 1) + '등급';
+            var labels = bins.map(function (b) {
+                return numberOrZero(b.threshold) + '~' + numberOrZero(b.upper);
             });
 
             var isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
@@ -2141,9 +2368,7 @@
                             callbacks: {
                                 title: function (items) {
                                     var idx = items[0].dataIndex;
-                                    var band = getDistributionBandLabel_(bins[idx], idx);
-                                    var range = getDistributionRangeLabel_(bins[idx], idx, bins);
-                                    return band + ' (' + range + ')';
+                                    return getDistributionBandLabel_(bins[idx], idx);
                                 },
                                 label: function (context) {
                                     var idx = context.dataIndex;
@@ -2175,7 +2400,13 @@
 
         function switchItemSubject(idx) {
             if (!currentData) return;
+            itemScorePage = 1;
             renderItemPanel(currentData, idx);
+        }
+
+        function goItemScorePage(page) {
+            itemScorePage = page;
+            if (currentData) renderItemPanel(currentData);
         }
 
         function switchKillerSubject(idx) {
@@ -2218,14 +2449,32 @@
             return '-';
         }
 
+        function getSubjectLocalNum(q, data) {
+            var subjects = (data.exam && data.exam.subjects) || [];
+            var subjectItemCounts = (data.exam && data.exam.subjectItemCounts) || [];
+            var qNo = numberOrZero(q.num);
+            if (Array.isArray(subjects) && Array.isArray(subjectItemCounts) && subjects.length === subjectItemCounts.length) {
+                var startNo = 1;
+                for (var i = 0; i < subjects.length; i++) {
+                    var count = numberOrZero(subjectItemCounts[i]);
+                    var endNo = startNo + count - 1;
+                    if (qNo >= startNo && qNo <= endNo) return qNo - startNo + 1;
+                    startNo += count;
+                }
+            }
+            return qNo;
+        }
+
         function isItemInSubject(q, subjectName, subjectIdx, data) {
             var subjects = (data.exam && data.exam.subjects) || [];
             var subjectItemCounts = (data.exam && data.exam.subjectItemCounts) || [];
 
-            // 1. 문항 데이터에 직접 과목 정보가 있는 경우
-            if (q.subject && String(q.subject).trim() === String(subjectName).trim()) return true;
+            // 1. 문항에 과목 정보가 명시되어 있으면 직접 비교만으로 판정
+            if (q.subject) {
+                return String(q.subject).trim() === String(subjectName).trim();
+            }
 
-            // 2. 과목별 문항수 정보를 이용한 매칭
+            // 2. 과목별 문항수 정보를 이용한 매칭 (과목 정보 없는 경우만)
             if (Array.isArray(subjects) && Array.isArray(subjectItemCounts) && subjects.length === subjectItemCounts.length) {
                 var startNo = 1;
                 for (var i = 0; i < subjectIdx; i++) {
@@ -2234,9 +2483,10 @@
                 var endNo = startNo + numberOrZero(subjectItemCounts[subjectIdx]) - 1;
                 var qNo = numberOrZero(q.num);
                 if (qNo >= startNo && qNo <= endNo) return true;
+                return false;
             }
 
-            // 3. Fallback: 기존 균등 분할 논리 (모달에서 사용한 것과 동일)
+            // 3. Fallback: 균등 분할 (과목 정보와 문항수 정보 모두 없는 경우만)
             var totalItems = (data.itemAnalysis || []).length;
             if (totalItems > 0 && subjects.length > 0) {
                 var base = Math.floor(totalItems / subjects.length);

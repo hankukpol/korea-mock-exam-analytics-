@@ -93,6 +93,9 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('성적 시스템 관리')
     .addItem('데이터 초기화 (시트 생성 + 목업 데이터)', 'initializeSampleData')
+    .addSeparator()
+    .addItem('원본 데이터 가져오기 (경찰)', 'importRawDataPoliceMenu')
+    .addItem('원본 데이터 가져오기 (소방)', 'importRawDataFireMenu')
     .addToUi();
 }
 
@@ -531,10 +534,12 @@ function collectScoreRowsByExam_(examId, examType) {
 }
 
 function collectItemRowsByExam_(examId, examType) {
-  var itemRows = [QUESTION_HEADERS.slice()];
-  var seenQuestionMap = {};
+  var headerRow = QUESTION_HEADERS.slice();
   var targetExamId = String(examId || '').trim();
   var questionSheets = getQuestionSheetsForType_(examType);
+  var seenKeys = {};
+  var subjectOrder = [];
+  var subjectGroups = {};
 
   for (var s = 0; s < questionSheets.length; s++) {
     var data = questionSheets[s].getDataRange().getValues();
@@ -543,17 +548,34 @@ function collectItemRowsByExam_(examId, examType) {
       if (rowExamId !== targetExamId) continue;
 
       var qNum = Number(data[r][ITEM_COL.NUM]) || 0;
-      if (!qNum || seenQuestionMap[qNum]) continue;
-      seenQuestionMap[qNum] = true;
-      itemRows.push(data[r]);
+      if (!qNum) continue;
+
+      // 과목명+문항번호 복합키로 중복 제거 (과목별 번호 1부터 시작 지원)
+      var subject = String(data[r][ITEM_COL.SUBJECT] || '').trim();
+      var dedupeKey = (subject || '_') + '::' + qNum;
+      if (seenKeys[dedupeKey]) continue;
+      seenKeys[dedupeKey] = true;
+
+      if (!subjectGroups[subject]) {
+        subjectGroups[subject] = [];
+        subjectOrder.push(subject);
+      }
+      subjectGroups[subject].push(data[r].slice());
     }
   }
 
-  if (itemRows.length > 2) {
-    var sortedBody = itemRows.slice(1).sort(function(a, b) {
+  // 과목 그룹별 내부 정렬 후 전체 순번 재부여
+  var itemRows = [headerRow];
+  var globalNum = 1;
+  for (var g = 0; g < subjectOrder.length; g++) {
+    var group = subjectGroups[subjectOrder[g]];
+    group.sort(function(a, b) {
       return (Number(a[ITEM_COL.NUM]) || 0) - (Number(b[ITEM_COL.NUM]) || 0);
     });
-    itemRows = [itemRows[0]].concat(sortedBody);
+    for (var gi = 0; gi < group.length; gi++) {
+      group[gi][ITEM_COL.NUM] = globalNum++;
+      itemRows.push(group[gi]);
+    }
   }
 
   return itemRows;
@@ -1851,7 +1873,8 @@ function getScoreAnalysis(examId, studentId) {
         s2: s.s2,
         s3: s.s3,
         total: s.total,
-        avg: s.avg
+        avg: s.avg,
+        items: Array.isArray(s.items) ? s.items : []
       };
     });
 
@@ -1978,7 +2001,7 @@ function getScoreAnalysis(examId, studentId) {
         subject: resolveItemSubject_(itemRows[m], num, exam.subjects, exam.subjectItemCounts),
         answer: answerText || '-',
         points: itemRows[m][ITEM_COL.POINTS],
-        correctRate: Number(itemRows[m][ITEM_COL.CORRECT_RATE]) || 0,
+        correctRate: (function(v) { var n = Number(v) || 0; return n > 0 && n <= 1 ? Number((n * 100).toFixed(1)) : n; })(itemRows[m][ITEM_COL.CORRECT_RATE]),
         difficulty: itemRows[m][ITEM_COL.DIFFICULTY] || '-',
         my: mark,
         studentAnswer: studentAnswer
@@ -2031,63 +2054,46 @@ function getScoreAnalysis(examId, studentId) {
 
     var normalizedMax = getDistributionMaxScore_(student, exam, maxTotal, myScore.total);
     if (normalizedMax <= 0) normalizedMax = 250;
+
+    // 점수 구간 히스토그램: 구간 크기 자동 결정
+    var binSize = normalizedMax <= 100 ? 10 : (normalizedMax <= 200 ? 20 : 25);
+    var binCount = Math.ceil(normalizedMax / binSize);
     var distributionBins = [];
-    var decileCount = 10;
-    for (var d = 0; d < decileCount; d++) {
-      var fromPct = d * 10;
-      var toPct = (d + 1) * 10;
+    for (var d = 0; d < binCount; d++) {
+      var lo = d * binSize;
+      var hi = (d + 1) * binSize;
       distributionBins.push({
-        decile: d + 1,
-        shortLabel: (d + 1) + '등급',
-        bandLabel: '상위 ' + fromPct + '~' + toPct + '%',
-        threshold: 0,
-        upper: 0,
-        label: '-',
+        shortLabel: lo + '~' + hi,
+        bandLabel: lo + '~' + hi + '점',
+        threshold: lo,
+        upper: hi,
+        label: lo + '~' + hi + '점',
         count: 0,
         ratio: 0
       });
     }
 
+    var myBinIdx = -1;
     for (var ds = 0; ds < allScores.length; ds++) {
       var scoreValue = Number(allScores[ds].total) || 0;
       if (scoreValue < 0) scoreValue = 0;
       if (scoreValue > normalizedMax) scoreValue = normalizedMax;
-      var binIdx = Math.floor(ds * decileCount / totalCount);
+      var binIdx = Math.floor(scoreValue / binSize);
       if (binIdx < 0) binIdx = 0;
       if (binIdx >= distributionBins.length) binIdx = distributionBins.length - 1;
-      var targetBin = distributionBins[binIdx];
-      targetBin.count++;
-      if (targetBin.count === 1) {
-        targetBin.upper = scoreValue;
-        targetBin.threshold = scoreValue;
-      } else {
-        if (scoreValue > targetBin.upper) targetBin.upper = scoreValue;
-        if (scoreValue < targetBin.threshold) targetBin.threshold = scoreValue;
-      }
+      distributionBins[binIdx].count++;
     }
 
-    var safeTotalCount = Math.max(1, totalCount);
-    var safeOverallRank = Math.max(1, overallRank);
-    var myDecileIdx = Math.min(decileCount - 1, Math.floor((safeOverallRank - 1) * decileCount / safeTotalCount));
+    // 내 점수가 속한 구간 찾기
+    var myTotalForBin = Number(myScore.total) || 0;
+    if (myTotalForBin < 0) myTotalForBin = 0;
+    if (myTotalForBin > normalizedMax) myTotalForBin = normalizedMax;
+    myBinIdx = Math.floor(myTotalForBin / binSize);
+    if (myBinIdx < 0) myBinIdx = 0;
+    if (myBinIdx >= distributionBins.length) myBinIdx = distributionBins.length - 1;
 
     for (var db = 0; db < distributionBins.length; db++) {
       var bin = distributionBins[db];
-      if (bin.count > 0) {
-        var low = Number(bin.threshold) || 0;
-        var high = Number(bin.upper) || 0;
-        if (low > high) {
-          var temp = low;
-          low = high;
-          high = temp;
-        }
-        bin.threshold = low;
-        bin.upper = high;
-        bin.label = (low === high) ? (high + '점') : (low + '~' + high + '점');
-      } else {
-        bin.threshold = 0;
-        bin.upper = 0;
-        bin.label = '데이터 없음';
-      }
       bin.ratio = Number((bin.count / totalCount * 100).toFixed(1));
     }
 
@@ -2251,9 +2257,10 @@ function getScoreAnalysis(examId, studentId) {
         },
         distribution: {
           totalMax: normalizedMax,
-          mode: 'decile',
-          binCount: decileCount,
-          myBinIndex: myDecileIdx,
+          mode: 'score_range',
+          binCount: binCount,
+          binSize: binSize,
+          myBinIndex: myBinIdx,
           bins: distributionBins
         },
         itemStats: {
@@ -2351,6 +2358,315 @@ function getExternalStudentAnswers_(examId, studentId) {
     return answerMap;
   } catch (e) {
     return {};
+  }
+}
+
+// ============================================
+// 원본 데이터 가져오기 (RawData → Scores + StudentResponses)
+// ============================================
+
+/**
+ * 메뉴에서 호출: 경찰 원본 데이터 가져오기
+ */
+function importRawDataPoliceMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var examIdResp = ui.prompt(
+    '경찰 원본 데이터 가져오기',
+    '시험ID를 입력하세요 (예: P2601):',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (examIdResp.getSelectedButton() !== ui.Button.OK) return;
+  var examId = examIdResp.getResponseText().trim();
+  if (!examId) { ui.alert('시험ID를 입력해주세요.'); return; }
+
+  var result = importRawStudentData(examId, '경찰');
+  ui.alert(result.message);
+}
+
+/**
+ * 메뉴에서 호출: 소방 원본 데이터 가져오기
+ */
+function importRawDataFireMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var examIdResp = ui.prompt(
+    '소방 원본 데이터 가져오기',
+    '시험ID를 입력하세요 (예: F2601):',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (examIdResp.getSelectedButton() !== ui.Button.OK) return;
+  var examId = examIdResp.getResponseText().trim();
+  if (!examId) { ui.alert('시험ID를 입력해주세요.'); return; }
+
+  var result = importRawStudentData(examId, '소방');
+  ui.alert(result.message);
+}
+
+/**
+ * 원본 데이터 가져오기 메인 함수
+ *
+ * RawData_Police / RawData_Fire 시트에서 3행 반복 패턴 데이터를 읽어서:
+ *   - Scores 시트에 O/X 마크 + 과목별 점수 기록
+ *   - StudentResponses 시트에 학생 실제 답안 기록
+ *
+ * 원본 데이터 시트 구조:
+ *   A열: 수험번호 (3행마다 반복)
+ *   B~U열: 과목1 (예: 헌법 20문항)
+ *   V~BI열: 과목2 (예: 형사법 40문항)
+ *   BJ~CW열: 과목3 (예: 경찰학 40문항)
+ *
+ *   3행 반복 패턴:
+ *     행1: 정답 (원본 정답)
+ *     행2: 학생 입력 정답
+ *     행3: 정오표 (O/X)
+ */
+function importRawStudentData(examId, examType) {
+  try {
+    if (!examId) return { success: false, message: '시험ID가 필요합니다.' };
+
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var type = String(examType || '').trim();
+
+    // 1. 시험 정보 확인
+    var examSheet = getSheet(CONFIG.SHEET_EXAM);
+    var examRows = examSheet.getDataRange().getValues();
+    var examInfo = null;
+    for (var e = 1; e < examRows.length; e++) {
+      if (String(examRows[e][EXAM_COL.ID]).trim() === String(examId).trim()) {
+        examInfo = {
+          id: String(examRows[e][EXAM_COL.ID]).trim(),
+          subjects: [
+            String(examRows[e][EXAM_COL.S1] || '').trim(),
+            String(examRows[e][EXAM_COL.S2] || '').trim(),
+            String(examRows[e][EXAM_COL.S3] || '').trim()
+          ].filter(function(s) { return s !== ''; })
+        };
+        break;
+      }
+    }
+    if (!examInfo) return { success: false, message: '시험ID "' + examId + '"을 찾을 수 없습니다. Exams 시트를 확인하세요.' };
+
+    // 시험 유형 자동 판별
+    if (!type) type = inferExamType_(examId, examInfo.subjects[0]);
+    var isPolice = (type === '경찰');
+
+    // 2. RawData 시트 읽기
+    var rawSheetName = isPolice ? 'RawData_Police' : 'RawData_Fire';
+    var rawSheet = ss.getSheetByName(rawSheetName);
+    if (!rawSheet) {
+      return {
+        success: false,
+        message: '"' + rawSheetName + '" 시트가 없습니다.\n' +
+          '시트를 만들고 원본 데이터를 붙여넣기 하세요.\n\n' +
+          '형식: A열=수험번호, B열~=문항 데이터\n' +
+          '3행 반복: 정답 → 학생답안 → 정오표(O/X)'
+      };
+    }
+
+    var rawData = rawSheet.getDataRange().getValues();
+
+    // 3행 반복 패턴의 시작점 자동 감지:
+    // O/X 행(정오표)을 찾아서 역산한다. 3행 그룹의 3번째 행이 O/X 행이므로
+    // O/X 행이 처음 나타나는 위치에서 -2 하면 데이터 시작점을 알 수 있다.
+    var dataStartRow = -1;
+    for (var probe = 0; probe < rawData.length && probe < 20; probe++) {
+      var oxCount = 0;
+      var totalCells = 0;
+      for (var pc = 1; pc < rawData[probe].length && pc <= 20; pc++) {
+        var pv = String(rawData[probe][pc] || '').trim().toUpperCase();
+        if (pv) {
+          totalCells++;
+          if (pv === 'O' || pv === 'X') oxCount++;
+        }
+      }
+      // O/X 비율이 80% 이상이면 정오표 행으로 판정
+      if (totalCells >= 5 && (oxCount / totalCells) >= 0.8) {
+        // 이 행이 그룹의 3번째(정오표)이므로, 시작은 2행 전
+        dataStartRow = probe - 2;
+        break;
+      }
+    }
+
+    // O/X 행을 못 찾은 경우: 텍스트 헤더 감지로 fallback
+    if (dataStartRow < 0) {
+      dataStartRow = 0;
+      if (rawData.length > 0) {
+        var firstRow = rawData[0];
+        for (var fi = 0; fi < firstRow.length; fi++) {
+          var cellVal = String(firstRow[fi] || '').trim();
+          if (cellVal && isNaN(Number(cellVal)) && cellVal !== 'O' && cellVal !== 'X') {
+            dataStartRow = 1;
+            break;
+          }
+        }
+      }
+    }
+    if (dataStartRow < 0) dataStartRow = 0;
+    var dataRows = rawData.slice(dataStartRow);
+
+    if (dataRows.length < 3) {
+      return { success: false, message: '데이터가 부족합니다. 최소 3행(1명분)이 필요합니다.' };
+    }
+
+    var totalQuestions = dataRows[0].length - 1; // A열(수험번호) 제외
+    if (totalQuestions < 1) {
+      return { success: false, message: '문항 데이터가 없습니다. B열부터 문항 데이터가 있어야 합니다.' };
+    }
+
+    // 3. ItemAnalysis에서 문항별 배점 읽기
+    var itemRows = collectItemRowsByExam_(examId, type);
+    var pointsMap = {}; // 전체 문항번호 → 배점
+    for (var i = 1; i < itemRows.length; i++) {
+      var gNum = Number(itemRows[i][ITEM_COL.NUM]);
+      if (gNum > 0) {
+        pointsMap[gNum] = Number(itemRows[i][ITEM_COL.POINTS]) || 0;
+      }
+    }
+
+    // 4. 과목별 문항 수 결정
+    var track = isPolice ? 'police' : 'fire_public';
+    var subjectItemCounts = resolveItemCountsBySubject_(examInfo.subjects, track, []);
+    // 과목별 문항 수 합계가 0이면 전체 문항을 균등 분배
+    var countsSum = subjectItemCounts.reduce(function(a, b) { return a + b; }, 0);
+    if (countsSum === 0 && examInfo.subjects.length > 0) {
+      var base = Math.floor(totalQuestions / examInfo.subjects.length);
+      for (var ci = 0; ci < examInfo.subjects.length; ci++) {
+        subjectItemCounts[ci] = base;
+      }
+    }
+
+    // 5. Scores 시트 준비
+    var scoreSheetName = isPolice ? CONFIG.SHEET_SCORE_POLICE : CONFIG.SHEET_SCORE_FIRE;
+    var scoreSheet = getSheet(scoreSheetName);
+    var scoreData = scoreSheet.getDataRange().getValues();
+    var existingScoreMap = {}; // 수험번호 → 행 번호 (1-indexed)
+    for (var sr = 1; sr < scoreData.length; sr++) {
+      var srExamId = String(scoreData[sr][SCORE_COL.EXAM_ID] || '').trim();
+      var srStudentId = String(scoreData[sr][SCORE_COL.STUDENT_ID] || '').trim();
+      if (srExamId === String(examId).trim()) {
+        existingScoreMap[srStudentId] = sr + 1;
+      }
+    }
+
+    // 6. StudentResponses 시트 준비
+    var responseSheet = ss.getSheetByName('StudentResponses');
+    if (!responseSheet) {
+      responseSheet = ss.insertSheet('StudentResponses');
+    }
+    // 기존 해당 시험 데이터 제거
+    var respData = responseSheet.getDataRange().getValues();
+    var rowsToDelete = [];
+    for (var rd = respData.length - 1; rd >= 1; rd--) {
+      if (String(respData[rd][0] || '').trim() === String(examId).trim()) {
+        rowsToDelete.push(rd + 1);
+      }
+    }
+    for (var del = 0; del < rowsToDelete.length; del++) {
+      responseSheet.deleteRow(rowsToDelete[del]);
+    }
+    // 헤더가 없으면 추가
+    if (responseSheet.getLastRow() < 1) {
+      var respHeaders = ['시험ID', '수험번호'];
+      for (var h = 1; h <= totalQuestions; h++) {
+        respHeaders.push('Q' + h);
+      }
+      responseSheet.appendRow(respHeaders);
+    }
+
+    // 7. 3행 그룹별 처리
+    var scoresCreated = 0;
+    var scoresUpdated = 0;
+    var responsesWritten = 0;
+    var errors = [];
+
+    for (var g = 0; g + 2 < dataRows.length; g += 3) {
+      var correctRow = dataRows[g];     // 정답
+      var answerRow = dataRows[g + 1];  // 학생 입력 정답
+      var markRow = dataRows[g + 2];    // 정오표 (O/X)
+
+      // 수험번호: 3행 중 아무 행에서든 가져오기
+      var studentId = String(correctRow[0] || answerRow[0] || markRow[0] || '').trim();
+      if (!studentId) continue;
+
+      // O/X 마크와 학생 답안 추출 (B열=인덱스1 부터)
+      var oxMarks = [];
+      var studentAnswers = [];
+      for (var q = 1; q <= totalQuestions; q++) {
+        var ox = String(markRow[q] || '').trim().toUpperCase();
+        oxMarks.push(ox);
+        studentAnswers.push(String(answerRow[q] || '').trim());
+      }
+
+      // 과목별 점수 계산
+      var subjectScores = [];
+      var qStart = 0;
+      for (var si = 0; si < examInfo.subjects.length; si++) {
+        var count = subjectItemCounts[si] || 0;
+        var subjectScore = 0;
+        for (var qi = qStart; qi < qStart + count && qi < oxMarks.length; qi++) {
+          if (oxMarks[qi] === 'O') {
+            subjectScore += pointsMap[qi + 1] || 0;
+          }
+        }
+        // 배점 정보가 없으면 정답 개수 기반으로 계산 불가 → 0
+        subjectScores.push(Number(subjectScore.toFixed(1)));
+        qStart += count;
+      }
+
+      var total = subjectScores.reduce(function(a, b) { return a + b; }, 0);
+      var avg = examInfo.subjects.length > 0 ? total / examInfo.subjects.length : 0;
+
+      // Scores 시트에 기록
+      var existingRow = existingScoreMap[studentId];
+      if (existingRow) {
+        // 기존 행 업데이트: O/X 마크 추가/갱신
+        var updateRange = scoreSheet.getRange(existingRow, SCORE_COL.ITEM_START + 1, 1, oxMarks.length);
+        updateRange.setValues([oxMarks]);
+        // 과목 점수가 계산된 경우만 업데이트 (배점 정보가 있을 때)
+        if (total > 0) {
+          var scoreRange = scoreSheet.getRange(existingRow, SCORE_COL.S1 + 1, 1, 5);
+          scoreRange.setValues([[
+            subjectScores[0] || 0,
+            subjectScores[1] || 0,
+            subjectScores[2] || 0,
+            Number(total.toFixed(1)),
+            Number(avg.toFixed(1))
+          ]]);
+        }
+        scoresUpdated++;
+      } else {
+        // 신규 행 생성
+        var newRow = [examId, studentId];
+        newRow.push(subjectScores[0] || 0);
+        newRow.push(subjectScores[1] || 0);
+        newRow.push(subjectScores[2] || 0);
+        newRow.push(Number(total.toFixed(1)));
+        newRow.push(Number(avg.toFixed(1)));
+        for (var ox2 = 0; ox2 < oxMarks.length; ox2++) {
+          newRow.push(oxMarks[ox2]);
+        }
+        scoreSheet.appendRow(newRow);
+        scoresCreated++;
+      }
+
+      // StudentResponses 시트에 학생 답안 기록
+      var respRow = [examId, studentId];
+      for (var sa = 0; sa < studentAnswers.length; sa++) {
+        respRow.push(studentAnswers[sa]);
+      }
+      responseSheet.appendRow(respRow);
+      responsesWritten++;
+    }
+
+    var msg = '가져오기 완료!\n';
+    msg += '처리 학생 수: ' + (scoresCreated + scoresUpdated) + '명\n';
+    msg += '  - Scores 신규 생성: ' + scoresCreated + '명\n';
+    msg += '  - Scores 업데이트: ' + scoresUpdated + '명\n';
+    msg += '  - 학생답안(StudentResponses): ' + responsesWritten + '명\n';
+    msg += '총 문항 수: ' + totalQuestions + '문항';
+
+    return { success: true, message: msg };
+  } catch (err) {
+    return { success: false, message: '오류 발생: ' + err.message };
   }
 }
 
